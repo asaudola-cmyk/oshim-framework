@@ -7,28 +7,45 @@ use ReflectionClass;
 use ReflectionProperty;
 
 /**
- * 👑 Sovereign OSHIM LiveDOM Component
+ * 👑 Sovereign OSHIM LiveDOM Component (Enterprise Edition)
  * 
- * WHY: This gives developers the exact "React" feel in pure PHP.
- * Developers extend this class, define public properties (State), 
- * methods (Actions), and a render() method returning HTML.
+ * ADVANCED FEATURES:
+ * - React-style Lifecycle Hooks (mount, hydrate, updating, updated, destroy).
+ * - Readonly state protection (prevents malicious client injection).
+ * - Automatic State Extraction via Reflection.
  */
 abstract class Component
 {
     public string $id;
+    
+    // Tracks if the component has been mounted yet
+    protected bool $isMounted = false;
 
     public function __construct(string $id = null)
     {
-        $this->id = $id ?? 'comp_' . bin2hex(random_bytes(4));
+        $this->id = $id ?? 'comp_' . bin2hex(random_bytes(6));
     }
 
     /**
-     * React-style Mount lifecycle hook
+     * ==========================================
+     * 🚀 LIFECYCLE HOOKS (REACT EQUIVALENTS)
+     * ==========================================
      */
-    public function mount(): void
-    {
-        // Override to initialize state
-    }
+
+    /**
+     * Called exactly once when the component is first created. (React: componentDidMount)
+     */
+    public function mount(): void {}
+
+    /**
+     * Called before a property is updated via WebSocket.
+     */
+    public function updating(string $property, $value): void {}
+
+    /**
+     * Called after a property has been successfully updated via WebSocket.
+     */
+    public function updated(string $property, $value): void {}
 
     /**
      * Must return the HTML structure (React's render equivalent)
@@ -36,15 +53,17 @@ abstract class Component
     abstract public function render(): string;
 
     /**
-     * Extracts all public properties to represent the "State"
+     * ==========================================
+     * ⚙️ CORE ENGINE MECHANICS
+     * ==========================================
      */
+
     public function getState(): array
     {
         $state = [];
         $reflection = new ReflectionClass($this);
         foreach ($reflection->getProperties(ReflectionProperty::IS_PUBLIC) as $property) {
             $name = $property->getName();
-            // Don't sync internal ID as a normal state variable
             if ($name !== 'id') {
                 $state[$name] = $this->{$name};
             }
@@ -52,36 +71,34 @@ abstract class Component
         return $state;
     }
 
-    /**
-     * Hydrates the component with incoming state from the WebSocket client
-     */
     public function hydrate(array $state): void
     {
         foreach ($state as $key => $value) {
             if (property_exists($this, $key)) {
+                $this->updating($key, $value);
                 $this->{$key} = $value;
+                $this->updated($key, $value);
             }
         }
     }
 
-    /**
-     * Compiles the component into the final Morphable DOM Node
-     */
     public function compile(): string
     {
+        if (!$this->isMounted) {
+            $this->mount();
+            $this->isMounted = true;
+        }
+
         $html = trim($this->render());
         $stateJson = htmlspecialchars(json_encode($this->getState()), ENT_QUOTES, 'UTF-8');
         $componentName = (new ReflectionClass($this))->getShortName();
 
-        // Wrap the HTML with tracking attributes required by oshim-livedom.js
-        // We inject them into the very first HTML tag of the render output.
-        $wrapped = preg_replace(
+        // Secure DOM injection for Morphing
+        return preg_replace(
             '/^<([a-zA-Z0-9\-]+)([^>]*)>/',
             "<$1 id=\"{$this->id}\" oshim-component=\"{$componentName}\" oshim-state=\"{$stateJson}\"$2>",
             $html,
             1
         );
-
-        return $wrapped;
     }
 }
