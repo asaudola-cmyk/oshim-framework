@@ -122,6 +122,7 @@ class Document
         {$bodyContent}
     </main>
     {$footerHtml}
+    <script src="/oshim-livedom.js"></script>
     {$runtimeTag}
 </body>
 </html>

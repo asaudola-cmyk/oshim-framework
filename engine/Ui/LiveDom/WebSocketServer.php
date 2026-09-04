@@ -5,24 +5,12 @@ namespace Oshim\Ui\LiveDom;
 
 use RuntimeException;
 
-/**
- * 👑 Sovereign OSHIM WebSocket Server (Multiplayer LiveDOM Engine)
- * 
- * ADVANCED: This is not just a 1-to-1 connection. This engine supports 
- * Channels & Broadcasting for Real-Time Collaborative UIs (like Figma/Google Docs).
- * State changes by one user are instantly broadcasted and morphed on all other clients.
- */
 class WebSocketServer
 {
     protected string $host;
     protected int $port;
     protected $masterSocket;
-    
-    // Tracks all active TCP connections
     protected array $clients = [];
-    
-    // Tracks which clients are subscribed to which components (Rooms/Channels)
-    // Format: ['ComponentID' => [clientId => clientSocket]]
     protected array $channels = [];
 
     public function __construct(string $host = '0.0.0.0', int $port = 8080)
@@ -37,20 +25,16 @@ class WebSocketServer
         if (!$this->masterSocket) {
             throw new RuntimeException("WebSocket Server failed to start: $errstr ($errno)");
         }
-
         stream_set_blocking($this->masterSocket, false);
         $this->clients[(int)$this->masterSocket] = $this->masterSocket;
 
-        echo "🚀 OSHIM Multiplayer LiveDOM Server running on ws://{$this->host}:{$this->port}\n";
+        echo "🚀 OSHIM React-Style LiveDOM Server running on ws://{$this->host}:{$this->port}\n";
 
         while (true) {
             $read = $this->clients;
             $write = null;
             $except = null;
-
-            if (stream_select($read, $write, $except, 0, 100000) < 1) {
-                continue;
-            }
+            if (stream_select($read, $write, $except, 0, 100000) < 1) continue;
 
             foreach ($read as $socket) {
                 if ($socket === $this->masterSocket) {
@@ -68,18 +52,11 @@ class WebSocketServer
         if ($client) {
             stream_set_blocking($client, false);
             $this->clients[(int)$client] = $client;
-            
             $request = fread($client, 4096);
             if (preg_match('#Sec-WebSocket-Key: (.*)\r\n#', $request, $matches)) {
                 $key = base64_encode(pack('H*', sha1($matches[1] . '258EAFA5-E914-47DA-95CA-C5AB0DC85B11')));
-                
-                $headers = "HTTP/1.1 101 Switching Protocols\r\n"
-                         . "Upgrade: websocket\r\n"
-                         . "Connection: Upgrade\r\n"
-                         . "Sec-WebSocket-Accept: $key\r\n\r\n";
-                         
+                $headers = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: $key\r\n\r\n";
                 fwrite($client, $headers);
-                echo "✔ Client Connected (ID: " . (int)$client . ")\n";
             } else {
                 fclose($client);
                 unset($this->clients[(int)$client]);
@@ -90,33 +67,22 @@ class WebSocketServer
     protected function handleClientMessage($client): void
     {
         $data = fread($client, 8192);
-        
         if ($data === false || strlen($data) === 0) {
             $this->disconnectClient($client);
             return;
         }
-
         $payload = $this->unmaskPayload($data);
         if (!$payload) return;
-
         $this->processLiveDomAction($client, $payload);
     }
 
     protected function disconnectClient($client): void
     {
         $clientId = (int)$client;
-        echo "✖ Client Disconnected (ID: {$clientId})\n";
-        
-        // Remove from global list
         unset($this->clients[$clientId]);
-        
-        // Edge Case: Remove from all subscribed channels to prevent memory leaks
         foreach ($this->channels as $channelId => &$subscribers) {
-            if (isset($subscribers[$clientId])) {
-                unset($subscribers[$clientId]);
-            }
+            if (isset($subscribers[$clientId])) unset($subscribers[$clientId]);
         }
-        
         fclose($client);
     }
 
@@ -124,48 +90,82 @@ class WebSocketServer
     {
         try {
             $action = json_decode($payload, true);
-            if (!$action || !isset($action['id'])) return;
+            if (!$action || !isset($action['id'], $action['component'])) return;
 
             $componentId = $action['id'];
             $clientId = (int)$client;
-
-            // Subscribe client to this component's channel automatically
+            
             if (!isset($this->channels[$componentId])) {
                 $this->channels[$componentId] = [];
             }
             $this->channels[$componentId][$clientId] = $client;
 
-            // 1. Process State
-            $newState = $action['state'] ?? [];
-            if (isset($action['method']) && $action['method'] === 'increment') {
-                $newState['count'] = ($newState['count'] ?? 0) + 1;
-            } elseif (isset($action['method']) && $action['method'] === 'update_model') {
-                $newState['text'] = $action['value'] ?? '';
+            // 🚀 REACT-STYLE COMPONENT HYDRATION 
+            // In a real app, you would resolve this via namespace or class map.
+            // For now, we simulate finding the user's component class.
+            
+            // Example User App Component:
+            $className = "App\\Components\\" . $action['component'];
+            
+            // Fallback for demonstration since we don't have user code yet
+            if (!class_exists($className)) {
+                // Dynamically create an anonymous class to prove the React feel works!
+                $component = new class($componentId) extends Component {
+                    public int $count = 0;
+                    public string $text = '';
+
+                    public function increment() { $this->count++; }
+                    public function update_model($val) { $this->text = $val; }
+
+                    public function render(): string {
+                        return <<<HTML
+                        <div class="p-6 bg-gray-900 text-white rounded-lg shadow-xl">
+                            <h1 class="text-2xl font-bold mb-4">React Feel in PHP</h1>
+                            <p class="mb-2">Multiplayer Count: <span class="text-green-400">{$this->count}</span></p>
+                            <button oshim-click="increment" class="bg-blue-600 px-4 py-2 rounded font-bold hover:bg-blue-500 transition">
+                                Increment (+)
+                            </button>
+                            
+                            <div class="mt-6">
+                                <label class="block text-sm mb-1">Live Shared Note:</label>
+                                <input type="text" oshim-model="text" value="{$this->text}" class="w-full bg-gray-800 border border-gray-700 p-2 rounded text-white" />
+                                <p class="mt-2 text-sm text-gray-400">All users see: <strong class="text-yellow-400">{$this->text}</strong></p>
+                            </div>
+                        </div>
+                        HTML;
+                    }
+                };
+            } else {
+                $component = new $className($componentId);
             }
 
-            // 2. Re-render HTML (Advanced VDOM Diff target)
-            $text = htmlspecialchars($newState['text'] ?? '');
-            $count = $newState['count'] ?? 0;
-            
-            $html = "<div oshim-component='CollaborationBoard' id='{$componentId}'>";
-            $html .= "<h1 class='text-xl'>Multiplayer Count: {$count}</h1>";
-            $html .= "<button oshim-click='increment' class='btn'>Increment (+)</button>";
-            $html .= "<div class='mt-4'>";
-            $html .= "<label>Live Shared Note:</label>";
-            $html .= "<input type='text' oshim-model='text' value='{$text}' class='input' />";
-            $html .= "<p class='mt-2'>All users see: <strong>{$text}</strong></p>";
-            $html .= "</div></div>";
+            // 1. Hydrate state
+            if (isset($action['state'])) {
+                $component->hydrate($action['state']);
+            }
+
+            // 2. Execute Method
+            if (isset($action['method']) && method_exists($component, $action['method'])) {
+                $method = $action['method'];
+                $val = $action['value'] ?? null;
+                if ($val !== null) {
+                    $component->$method($val);
+                } else {
+                    $component->$method();
+                }
+            }
+
+            // 3. Compile React-style Render to HTML
+            $html = $component->compile();
 
             $response = json_encode([
                 'id' => $componentId,
                 'html' => $html,
-                'state' => $newState
+                'state' => $component->getState()
             ]);
             
-            // 3. BROADCAST TO ALL CLIENTS IN THE CHANNEL
-            // WHY: This creates instant multiplayer UI synchronization!
+            // 4. Broadcast
             foreach ($this->channels[$componentId] as $subscriberId => $subscriberSocket) {
-                // We send it to everyone, including the sender, to ensure pure state sync
                 $this->sendToClient($subscriberSocket, $response);
             }
             
@@ -178,40 +178,21 @@ class WebSocketServer
     {
         $b1 = 0x80 | (0x1 & 0x0f);
         $length = strlen($text);
-        
-        if ($length <= 125) {
-            $header = pack('CC', $b1, $length);
-        } elseif ($length > 125 && $length < 65536) {
-            $header = pack('CCn', $b1, 126, $length);
-        } else {
-            $header = pack('CCNN', $b1, 127, $length);
-        }
-        
-        // Suppress warnings in case the socket closed between check and write
+        if ($length <= 125) { $header = pack('CC', $b1, $length); }
+        elseif ($length > 125 && $length < 65536) { $header = pack('CCn', $b1, 126, $length); }
+        else { $header = pack('CCNN', $b1, 127, $length); }
         @fwrite($client, $header . $text);
     }
 
     protected function unmaskPayload(string $data): ?string
     {
         if (strlen($data) < 2) return null;
-        
         $length = ord($data[1]) & 127;
-        
-        if ($length == 126) {
-            $masks = substr($data, 4, 4);
-            $data = substr($data, 8);
-        } elseif ($length == 127) {
-            $masks = substr($data, 10, 4);
-            $data = substr($data, 14);
-        } else {
-            $masks = substr($data, 2, 4);
-            $data = substr($data, 6);
-        }
-        
+        if ($length == 126) { $masks = substr($data, 4, 4); $data = substr($data, 8); }
+        elseif ($length == 127) { $masks = substr($data, 10, 4); $data = substr($data, 14); }
+        else { $masks = substr($data, 2, 4); $data = substr($data, 6); }
         $text = '';
-        for ($i = 0; $i < strlen($data); ++$i) {
-            $text .= $data[$i] ^ $masks[$i % 4];
-        }
+        for ($i = 0; $i < strlen($data); ++$i) { $text .= $data[$i] ^ $masks[$i % 4]; }
         return $text;
     }
 }
