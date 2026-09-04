@@ -1,0 +1,9 @@
+# OSHIM Framework Gitignore
+.agents/
+tmp/
+dist/
+build/
+*.log
+.DS_Store
+storage/framework/cache/*
+!storage/framework/cache/.gitkeep

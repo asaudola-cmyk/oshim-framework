@@ -1,0 +1,18 @@
+<?php
+declare(strict_types=1);
+
+namespace Oshim\Virtualization\Exceptions;
+
+use RuntimeException;
+use Throwable;
+
+/**
+ * Base domain exception for all virtualization errors.
+ */
+class VirtualizationException extends RuntimeException
+{
+    public function __construct(string $message = '', int $code = 0, ?Throwable $previous = null)
+    {
+        parent::__construct($message, $code, $previous);
+    }
+}
