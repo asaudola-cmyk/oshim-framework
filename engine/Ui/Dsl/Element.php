@@ -3,15 +3,20 @@ declare(strict_types=1);
 
 namespace Oshim\Ui\Dsl;
 
+/**
+ * 👑 Sovereign OSHIM UI DSL Base Element
+ * 
+ * WHY: This allows developers to build UI using 100% Object-Oriented PHP.
+ * It eliminates the need for messy HTML strings and provides full IDE auto-completion.
+ */
 class Element
 {
-    protected string $tag = 'div';
+    protected string $tag;
     protected array $attributes = [];
     protected array $children = [];
-    protected ?string $textContent = null;
-    protected bool $isSelfClosing = false;
+    protected string $text = '';
 
-    public function __construct(string $tag = 'div')
+    public function __construct(string $tag)
     {
         $this->tag = $tag;
     }
@@ -27,89 +32,76 @@ class Element
         return $this;
     }
 
-    public function class(string ...$classes): static
+    public function classes(string $classes): static
     {
-        $existing = $this->attributes['class'] ?? '';
-        $newClasses = implode(' ', array_filter($classes));
-        $this->attributes['class'] = trim($existing . ' ' . $newClasses);
+        $this->attributes['class'] = $classes;
         return $this;
     }
 
-    public function attr(string $name, mixed $value): static
+    public function attr(string $key, string $value): static
     {
-        $this->attributes[$name] = $value;
+        $this->attributes[$key] = $value;
         return $this;
     }
 
-    public function style(Style|string $style): static
+    public function text(string $text): static
     {
-        $existing = $this->attributes['style'] ?? '';
-        $styleStr = (string)$style;
-        $this->attributes['style'] = trim($existing . ' ' . $styleStr);
-        return $this;
-    }
-
-    public function text(string $content): static
-    {
-        $this->textContent = htmlspecialchars($content, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-        return $this;
-    }
-
-    public function raw(string $html): static
-    {
-        $this->textContent = $html;
-        return $this;
-    }
-
-    public function child(Element|string|null $child): static
-    {
-        if ($child !== null) {
-            $this->children[] = $child;
-        }
+        $this->text = $text;
         return $this;
     }
 
     public function children(array $children): static
     {
-        foreach ($children as $child) {
-            $this->child($child);
-        }
+        $this->children = $children;
+        return $this;
+    }
+    
+    public function child(Element $child): static
+    {
+        $this->children[] = $child;
         return $this;
     }
 
-    public function render(): string
+    public function onClick(string $method): static
     {
-        $attrs = '';
-        foreach ($this->attributes as $name => $value) {
-            if ($value === true) {
-                $attrs .= ' ' . htmlspecialchars($name);
-            } elseif ($value !== false && $value !== null) {
-                $attrs .= ' ' . htmlspecialchars($name) . '="' . htmlspecialchars((string)$value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '"';
-            }
+        $this->attributes['oshim-click'] = $method;
+        return $this;
+    }
+
+    public function model(string $property): static
+    {
+        $this->attributes['oshim-model'] = $property;
+        return $this;
+    }
+
+    public function compile(): string
+    {
+        $html = "<{$this->tag}";
+        foreach ($this->attributes as $key => $value) {
+            $html .= " {$key}=\"" . htmlspecialchars($value, ENT_QUOTES) . "\"";
+        }
+        
+        // Self-closing tags
+        if (in_array($this->tag, ['input', 'img', 'br', 'hr', 'meta'])) {
+            return $html . " />";
         }
 
-        if ($this->isSelfClosing) {
-            return "<{$this->tag}{$attrs} />";
-        }
-
-        $inner = '';
-        if ($this->textContent !== null) {
-            $inner .= $this->textContent;
+        $html .= ">";
+        
+        if ($this->text !== '') {
+            $html .= $this->text;
         }
 
         foreach ($this->children as $child) {
             if ($child instanceof Element) {
-                $inner .= $child->render();
+                $html .= $child->compile();
             } elseif (is_string($child)) {
-                $inner .= $child;
+                $html .= $child;
             }
         }
 
-        return "<{$this->tag}{$attrs}>{$inner}</{$this->tag}>";
-    }
-
-    public function __toString(): string
-    {
-        return $this->render();
+        $html .= "</{$this->tag}>";
+        
+        return $html;
     }
 }

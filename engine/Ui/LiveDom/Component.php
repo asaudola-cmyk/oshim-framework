@@ -5,20 +5,19 @@ namespace Oshim\Ui\LiveDom;
 
 use ReflectionClass;
 use ReflectionProperty;
+use Oshim\Ui\Dsl\Element;
 
 /**
- * 👑 Sovereign OSHIM LiveDOM Component (Enterprise Edition)
+ * 👑 Sovereign OSHIM LiveDOM Component (Option 2 & 3 Edition)
  * 
  * ADVANCED FEATURES:
- * - React-style Lifecycle Hooks (mount, hydrate, updating, updated, destroy).
- * - Readonly state protection (prevents malicious client injection).
- * - Automatic State Extraction via Reflection.
+ * - NO MORE UGLY HTML STRINGS!
+ * - render() now strictly returns a Fluent DSL Element.
+ * - Supports being the target of the PHP-JSX Transpiler.
  */
 abstract class Component
 {
     public string $id;
-    
-    // Tracks if the component has been mounted yet
     protected bool $isMounted = false;
 
     public function __construct(string $id = null)
@@ -26,37 +25,14 @@ abstract class Component
         $this->id = $id ?? 'comp_' . bin2hex(random_bytes(6));
     }
 
-    /**
-     * ==========================================
-     * 🚀 LIFECYCLE HOOKS (REACT EQUIVALENTS)
-     * ==========================================
-     */
-
-    /**
-     * Called exactly once when the component is first created. (React: componentDidMount)
-     */
     public function mount(): void {}
-
-    /**
-     * Called before a property is updated via WebSocket.
-     */
     public function updating(string $property, $value): void {}
-
-    /**
-     * Called after a property has been successfully updated via WebSocket.
-     */
     public function updated(string $property, $value): void {}
 
     /**
-     * Must return the HTML structure (React's render equivalent)
+     * 🚀 NEW ARCHITECTURE: Must return a DSL Element instead of an HTML string.
      */
-    abstract public function render(): string;
-
-    /**
-     * ==========================================
-     * ⚙️ CORE ENGINE MECHANICS
-     * ==========================================
-     */
+    abstract public function render(): Element;
 
     public function getState(): array
     {
@@ -89,16 +65,18 @@ abstract class Component
             $this->isMounted = true;
         }
 
-        $html = trim($this->render());
+        // 1. Get the Fluent DSL Element Tree
+        $elementTree = $this->render();
+        
         $stateJson = htmlspecialchars(json_encode($this->getState()), ENT_QUOTES, 'UTF-8');
         $componentName = (new ReflectionClass($this))->getShortName();
 
-        // Secure DOM injection for Morphing
-        return preg_replace(
-            '/^<([a-zA-Z0-9\-]+)([^>]*)>/',
-            "<$1 id=\"{$this->id}\" oshim-component=\"{$componentName}\" oshim-state=\"{$stateJson}\"$2>",
-            $html,
-            1
-        );
+        // 2. Inject tracking attributes to the Root Element
+        $elementTree->id($this->id)
+                   ->attr('oshim-component', $componentName)
+                   ->attr('oshim-state', $stateJson);
+
+        // 3. Compile the DSL to HTML string internally for the browser
+        return $elementTree->compile();
     }
 }

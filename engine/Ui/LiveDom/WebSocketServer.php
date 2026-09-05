@@ -117,22 +117,17 @@ class WebSocketServer
                     public function increment() { $this->count++; }
                     public function update_model($val) { $this->text = $val; }
 
-                    public function render(): string {
-                        return <<<HTML
-                        <div class="p-6 bg-gray-900 text-white rounded-lg shadow-xl">
-                            <h1 class="text-2xl font-bold mb-4">React Feel in PHP</h1>
-                            <p class="mb-2">Multiplayer Count: <span class="text-green-400">{$this->count}</span></p>
-                            <button oshim-click="increment" class="bg-blue-600 px-4 py-2 rounded font-bold hover:bg-blue-500 transition">
-                                Increment (+)
-                            </button>
-                            
-                            <div class="mt-6">
-                                <label class="block text-sm mb-1">Live Shared Note:</label>
-                                <input type="text" oshim-model="text" value="{$this->text}" class="w-full bg-gray-800 border border-gray-700 p-2 rounded text-white" />
-                                <p class="mt-2 text-sm text-gray-400">All users see: <strong class="text-yellow-400">{$this->text}</strong></p>
-                            </div>
-                        </div>
-                        HTML;
+                                        public function render(): \Oshim\Ui\Dsl\Element {
+                        return \Oshim\Ui\Dsl\Div::make()->classes('p-6 bg-gray-900 text-white rounded-lg shadow-xl')->children([
+                            \Oshim\Ui\Dsl\H1::make()->text("React Feel in PHP (Pure DSL)")->classes('text-2xl font-bold mb-4'),
+                            \Oshim\Ui\Dsl\Div::make()->text("Multiplayer Count: " . $this->count)->classes('mb-2'),
+                            \Oshim\Ui\Dsl\Button::make('Increment (+)')->onClick('increment')->classes('bg-blue-600 px-4 py-2 rounded font-bold hover:bg-blue-500 transition'),
+                            \Oshim\Ui\Dsl\Div::make()->classes('mt-6')->children([
+                                \Oshim\Ui\Dsl\Element::make('label')->text('Live Shared Note:')->classes('block text-sm mb-1'),
+                                \Oshim\Ui\Dsl\Input::make('text')->model('text')->attr('value', $this->text)->classes('w-full bg-gray-800 border border-gray-700 p-2 rounded text-white'),
+                                \Oshim\Ui\Dsl\Element::make('p')->text("All users see: <strong>" . $this->text . "</strong>")->classes('mt-2 text-sm text-gray-400')
+                            ])
+                        ]);
                     }
                 };
             } else {
