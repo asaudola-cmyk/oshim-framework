@@ -31,30 +31,76 @@ class ServeCommand extends Command
 
         try {
             $reactor = new UniversalReactor($host, $port);
+            $basePath = defined('OSHIM_BASE_PATH') ? OSHIM_BASE_PATH : getcwd();
             
-            // Dummy HTTP Handler to serve the JS file and an example page
-            $reactor->setHttpHandler(function (string $method, string $uri) {
-                if ($uri === '/oshim-livedom.js') {
-                    $jsPath = dirname(__DIR__, 3) . '/public/oshim-livedom.js';
+            // Intelligent Application HTTP & Static Asset Handler
+            $reactor->setHttpHandler(function (string $method, string $uri) use ($basePath, $host, $port) {
+                $parsedUri = parse_url($uri, PHP_URL_PATH) ?? '/';
+
+                // 1. OSHIM LiveDOM Client Runtime
+                if ($parsedUri === '/oshim-livedom.js') {
+                    $jsPath = $basePath . '/public/oshim-livedom.js';
+                    if (!file_exists($jsPath)) {
+                        $jsPath = dirname(__DIR__, 3) . '/public/oshim-livedom.js';
+                    }
                     if (file_exists($jsPath)) {
-                        return file_get_contents($jsPath);
+                        return [
+                            'status' => 200,
+                            'headers' => ['Content-Type' => 'application/javascript; charset=UTF-8'],
+                            'body' => file_get_contents($jsPath)
+                        ];
                     }
                 }
+
+                // 2. Static File Resolution (public/ assets, images, styles)
+                $publicFile = realpath($basePath . '/public' . $parsedUri);
+                $publicDir = realpath($basePath . '/public');
+                if ($publicFile && $publicDir && str_starts_with($publicFile, $publicDir) && is_file($publicFile)) {
+                    $ext = strtolower(pathinfo($publicFile, PATHINFO_EXTENSION));
+                    $mime = match ($ext) {
+                        'css' => 'text/css; charset=UTF-8',
+                        'js' => 'application/javascript; charset=UTF-8',
+                        'json' => 'application/json; charset=UTF-8',
+                        'png' => 'image/png',
+                        'jpg', 'jpeg' => 'image/jpeg',
+                        'svg' => 'image/svg+xml; charset=UTF-8',
+                        'webp' => 'image/webp',
+                        'ico' => 'image/x-icon',
+                        'woff2' => 'font/woff2',
+                        'woff' => 'font/woff',
+                        'ttf' => 'font/ttf',
+                        default => 'application/octet-stream',
+                    };
+                    return [
+                        'status' => 200,
+                        'headers' => ['Content-Type' => $mime],
+                        'body' => file_get_contents($publicFile)
+                    ];
+                }
+
+                // 3. Application Routing Dispatch (Dynamic PHP application kernel)
+                $_SERVER['REQUEST_METHOD'] = $method;
+                $_SERVER['REQUEST_URI'] = $uri;
+                $_SERVER['SERVER_NAME'] = $host;
+                $_SERVER['SERVER_PORT'] = (string)$port;
+
+                $routesFile = $basePath . '/routes/web.php';
+                if (file_exists($routesFile)) {
+                    require_once $routesFile;
+                }
+
+                $router = \Oshim\Http\Router\RouteFacade::getRouter();
+                $request = \Oshim\Http\Request::capture();
                 
-                // Default fallback response
-                return <<<HTML
-                <!DOCTYPE html>
-                <html>
-                <head>
-                    <title>OSHIM Fiber Reactor</title>
-                    <script src="/oshim-livedom.js"></script>
-                </head>
-                <body class="bg-gray-900 text-white p-8 font-sans">
-                    <h1 class="text-3xl font-bold text-cyan-400">OSHIM Zero-Lag Server Active</h1>
-                    <p class="mt-4">HTTP and WebSockets are now running on the same port.</p>
-                </body>
-                </html>
-                HTML;
+                try {
+                    return $router->dispatch($request);
+                } catch (\Throwable $e) {
+                    return [
+                        'status' => 500,
+                        'headers' => ['Content-Type' => 'text/html; charset=UTF-8'],
+                        'body' => "<h1>500 Server Error</h1><pre>" . htmlspecialchars($e->getMessage()) . "</pre>"
+                    ];
+                }
             });
 
             $reactor->boot();

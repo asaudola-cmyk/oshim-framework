@@ -15,10 +15,13 @@ class Element
     protected array $attributes = [];
     protected array $children = [];
     protected string $text = '';
+    protected ?string $textContent = null;
+    protected bool $isSelfClosing = false;
 
-    public function __construct(string $tag)
+    public function __construct(string $tag = 'div')
     {
         $this->tag = $tag;
+        $this->isSelfClosing = in_array(strtolower($tag), ['input', 'img', 'br', 'hr', 'meta']);
     }
 
     public static function make(string $tag = 'div'): static
@@ -32,33 +35,65 @@ class Element
         return $this;
     }
 
+    /**
+     * Add one or multiple CSS classes (legacy & modern multi-arg support).
+     */
+    public function class(string ...$classes): static
+    {
+        $existing = $this->attributes['class'] ?? '';
+        $newClasses = implode(' ', array_filter($classes));
+        $this->attributes['class'] = trim($existing . ' ' . $newClasses);
+        return $this;
+    }
+
+    /**
+     * Set CSS classes string (modern LiveDOM fluent convention).
+     */
     public function classes(string $classes): static
     {
         $this->attributes['class'] = $classes;
         return $this;
     }
 
-    public function attr(string $key, string $value): static
+    public function attr(string $key, mixed $value): static
     {
         $this->attributes[$key] = $value;
         return $this;
     }
 
-    public function text(string $text): static
+    public function style(Style|string $style): static
     {
-        $this->text = $text;
+        $existing = $this->attributes['style'] ?? '';
+        $styleStr = (string)$style;
+        $this->attributes['style'] = trim($existing . ' ' . $styleStr);
+        return $this;
+    }
+
+    public function text(string $content): static
+    {
+        $this->text = $content;
+        return $this;
+    }
+
+    public function raw(string $html): static
+    {
+        $this->children[] = $html;
         return $this;
     }
 
     public function children(array $children): static
     {
-        $this->children = $children;
+        foreach ($children as $child) {
+            $this->child($child);
+        }
         return $this;
     }
     
-    public function child(Element $child): static
+    public function child(Element|string|null $child): static
     {
-        $this->children[] = $child;
+        if ($child !== null) {
+            $this->children[] = $child;
+        }
         return $this;
     }
 
@@ -76,20 +111,29 @@ class Element
 
     public function compile(): string
     {
-        $html = "<{$this->tag}";
+        return $this->render();
+    }
+
+    public function render(): string
+    {
+        $attrs = '';
         foreach ($this->attributes as $key => $value) {
-            $html .= " {$key}=\"" . htmlspecialchars($value, ENT_QUOTES) . "\"";
+            if ($value === true) {
+                $attrs .= ' ' . htmlspecialchars($key);
+            } elseif ($value !== false && $value !== null) {
+                $attrs .= " {$key}=\"" . htmlspecialchars((string)$value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . "\"";
+            }
         }
         
         // Self-closing tags
         if (in_array($this->tag, ['input', 'img', 'br', 'hr', 'meta'])) {
-            return $html . " />";
+            return "<{$this->tag}{$attrs} />";
         }
 
-        $html .= ">";
+        $html = "<{$this->tag}{$attrs}>";
         
         if ($this->text !== '') {
-            $html .= $this->text;
+            $html .= htmlspecialchars($this->text, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
         }
 
         foreach ($this->children as $child) {
@@ -103,5 +147,10 @@ class Element
         $html .= "</{$this->tag}>";
         
         return $html;
+    }
+
+    public function __toString(): string
+    {
+        return $this->render();
     }
 }

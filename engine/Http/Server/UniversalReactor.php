@@ -146,20 +146,68 @@ class UniversalReactor
             $method = $requestLine[0];
             $uri = $requestLine[1];
             
+            $status = 200;
+            $headers = [
+                'Content-Type' => 'text/html; charset=UTF-8',
+                'Connection' => 'close',
+                'Server' => 'OSHIM Universal Fiber Reactor'
+            ];
+            $responseBody = '';
+
             if ($this->httpHandler) {
-                $responseBody = ($this->httpHandler)($method, $uri);
+                try {
+                    $result = ($this->httpHandler)($method, $uri, $rawRequest);
+                    if ($result instanceof \Oshim\Http\Response) {
+                        $status = $result->getStatusCode();
+                        $responseBody = $result->getContent();
+                        foreach ($result->getHeaders() as $hKey => $hVal) {
+                            $headers[$hKey] = is_array($hVal) ? implode(', ', $hVal) : $hVal;
+                        }
+                    } elseif (is_array($result)) {
+                        $status = $result['status'] ?? 200;
+                        $responseBody = (string)($result['body'] ?? '');
+                        if (!empty($result['headers'])) {
+                            foreach ($result['headers'] as $k => $v) {
+                                $headers[$k] = $v;
+                            }
+                        }
+                    } else {
+                        $responseBody = (string)$result;
+                    }
+                } catch (\Throwable $e) {
+                    $status = 500;
+                    $responseBody = "<h1>500 Server Error</h1><p>" . htmlspecialchars($e->getMessage()) . "</p>";
+                }
             } else {
                 $responseBody = "<h1>OSHIM Universal Reactor</h1><p>Running in a Fiber Coroutine.</p>";
             }
-            
-            $length = strlen($responseBody);
-            $response = "HTTP/1.1 200 OK\r\n"
-                      . "Content-Type: text/html\r\n"
-                      . "Content-Length: {$length}\r\n"
-                      . "Connection: close\r\n\r\n"
-                      . $responseBody;
-                      
-            fwrite($client, $response);
+
+            $statusText = match ($status) {
+                200 => 'OK',
+                201 => 'Created',
+                204 => 'No Content',
+                301 => 'Moved Permanently',
+                302 => 'Found',
+                304 => 'Not Modified',
+                400 => 'Bad Request',
+                401 => 'Unauthorized',
+                403 => 'Forbidden',
+                404 => 'Not Found',
+                405 => 'Method Not Allowed',
+                419 => 'Page Expired',
+                500 => 'Internal Server Error',
+                default => 'OK',
+            };
+
+            $headers['Content-Length'] = (string)strlen($responseBody);
+
+            $headerString = "HTTP/1.1 {$status} {$statusText}\r\n";
+            foreach ($headers as $hName => $hVal) {
+                $headerString .= "{$hName}: {$hVal}\r\n";
+            }
+            $headerString .= "\r\n";
+
+            @fwrite($client, $headerString . $responseBody);
         }
         
         fclose($client);

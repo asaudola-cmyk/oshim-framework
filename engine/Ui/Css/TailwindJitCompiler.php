@@ -361,6 +361,9 @@ class TailwindJitCompiler
         if ($c === 'text-center') return 'text-align:center;';
         if ($c === 'text-right') return 'text-align:right;';
         if ($c === 'truncate') return 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+        if ($c === 'underline') return 'text-decoration:underline;';
+        if ($c === 'no-underline') return 'text-decoration:none;';
+        if ($c === 'line-through') return 'text-decoration:line-through;';
 
         // Borders & Radii
         if ($c === 'rounded-none') return 'border-radius:0px;';
