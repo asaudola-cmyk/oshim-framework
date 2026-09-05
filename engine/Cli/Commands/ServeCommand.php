@@ -7,6 +7,7 @@ use Oshim\Cli\Command;
 use Oshim\Cli\Input;
 use Oshim\Cli\Output;
 use Oshim\Http\Server\UniversalReactor;
+use Oshim\Ui\LiveDom\DemoComponent;
 
 class ServeCommand extends Command
 {
@@ -26,81 +27,45 @@ class ServeCommand extends Command
 
         $output->writeln("<bold><cyan>🚀 Booting OSHIM Universal Fiber Reactor</cyan></bold>");
         $output->writeln("Server running at: <green>http://{$host}:{$port}</green>");
-        $output->writeln("<yellow>Note: This server replaces the slow 'php -S' with our Native Fiber Engine.</yellow>");
+        $output->writeln("<yellow>Note: HTTP and WebSockets are multiplexed on this single port.</yellow>");
         $output->writeln("Press Ctrl+C to stop the server.\n");
 
         try {
             $reactor = new UniversalReactor($host, $port);
-            $basePath = defined('OSHIM_BASE_PATH') ? OSHIM_BASE_PATH : getcwd();
             
-            // Intelligent Application HTTP & Static Asset Handler
-            $reactor->setHttpHandler(function (string $method, string $uri) use ($basePath, $host, $port) {
-                $parsedUri = parse_url($uri, PHP_URL_PATH) ?? '/';
-
-                // 1. OSHIM LiveDOM Client Runtime
-                if ($parsedUri === '/oshim-livedom.js') {
-                    $jsPath = $basePath . '/public/oshim-livedom.js';
-                    if (!file_exists($jsPath)) {
-                        $jsPath = dirname(__DIR__, 3) . '/public/oshim-livedom.js';
-                    }
+            // Core HTTP Handler mapping
+            $reactor->setHttpHandler(function (string $method, string $uri) {
+                // Serve the LiveDOM Client Engine JS
+                if ($uri === '/oshim-livedom.js') {
+                    $jsPath = dirname(__DIR__, 3) . '/public/oshim-livedom.js';
                     if (file_exists($jsPath)) {
-                        return [
-                            'status' => 200,
-                            'headers' => ['Content-Type' => 'application/javascript; charset=UTF-8'],
-                            'body' => file_get_contents($jsPath)
-                        ];
+                        return file_get_contents($jsPath);
                     }
                 }
-
-                // 2. Static File Resolution (public/ assets, images, styles)
-                $publicFile = realpath($basePath . '/public' . $parsedUri);
-                $publicDir = realpath($basePath . '/public');
-                if ($publicFile && $publicDir && str_starts_with($publicFile, $publicDir) && is_file($publicFile)) {
-                    $ext = strtolower(pathinfo($publicFile, PATHINFO_EXTENSION));
-                    $mime = match ($ext) {
-                        'css' => 'text/css; charset=UTF-8',
-                        'js' => 'application/javascript; charset=UTF-8',
-                        'json' => 'application/json; charset=UTF-8',
-                        'png' => 'image/png',
-                        'jpg', 'jpeg' => 'image/jpeg',
-                        'svg' => 'image/svg+xml; charset=UTF-8',
-                        'webp' => 'image/webp',
-                        'ico' => 'image/x-icon',
-                        'woff2' => 'font/woff2',
-                        'woff' => 'font/woff',
-                        'ttf' => 'font/ttf',
-                        default => 'application/octet-stream',
-                    };
-                    return [
-                        'status' => 200,
-                        'headers' => ['Content-Type' => $mime],
-                        'body' => file_get_contents($publicFile)
-                    ];
-                }
-
-                // 3. Application Routing Dispatch (Dynamic PHP application kernel)
-                $_SERVER['REQUEST_METHOD'] = $method;
-                $_SERVER['REQUEST_URI'] = $uri;
-                $_SERVER['SERVER_NAME'] = $host;
-                $_SERVER['SERVER_PORT'] = (string)$port;
-
-                $routesFile = $basePath . '/routes/web.php';
-                if (file_exists($routesFile)) {
-                    require_once $routesFile;
-                }
-
-                $router = \Oshim\Http\Router\RouteFacade::getRouter();
-                $request = \Oshim\Http\Request::capture();
                 
-                try {
-                    return $router->dispatch($request);
-                } catch (\Throwable $e) {
-                    return [
-                        'status' => 500,
-                        'headers' => ['Content-Type' => 'text/html; charset=UTF-8'],
-                        'body' => "<h1>500 Server Error</h1><pre>" . htmlspecialchars($e->getMessage()) . "</pre>"
-                    ];
-                }
+                // Initialize the Demo Component for the Root Route
+                $component = new DemoComponent('root_demo');
+                $componentHtml = $component->compile();
+                
+                // Return the Full HTML Shell with Tailwind CSS
+                return <<<HTML
+                <!DOCTYPE html>
+                <html lang="en">
+                <head>
+                    <meta charset="UTF-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                    <title>OSHIM Sovereign Engine</title>
+                    <script src="https://cdn.tailwindcss.com"></script>
+                    <script src="/oshim-livedom.js"></script>
+                    <style>
+                        body { background-color: #111827; color: #fff; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+                    </style>
+                </head>
+                <body>
+                    {$componentHtml}
+                </body>
+                </html>
+                HTML;
             });
 
             $reactor->boot();
