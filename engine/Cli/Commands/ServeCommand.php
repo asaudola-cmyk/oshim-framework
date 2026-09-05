@@ -6,11 +6,12 @@ namespace Oshim\Cli\Commands;
 use Oshim\Cli\Command;
 use Oshim\Cli\Input;
 use Oshim\Cli\Output;
+use Oshim\Http\Server\UniversalReactor;
 
 class ServeCommand extends Command
 {
     protected string $name = 'serve';
-    protected string $description = 'Start the OSHIM local development server';
+    protected string $description = 'Start the OSHIM Universal Fiber Reactor (Zero-Lag Server)';
 
     protected function configure(): void
     {
@@ -20,35 +21,48 @@ class ServeCommand extends Command
 
     public function execute(Input $input, Output $output): int
     {
-        $host = $input->getOption('host', '127.0.0.1');
-        $port = $input->getOption('port', '8000');
+        $host = (string)$input->getOption('host', '127.0.0.1');
+        $port = (int)$input->getOption('port', '8000');
 
-        $basePath = defined('OSHIM_BASE_PATH') ? OSHIM_BASE_PATH : dirname(__DIR__, 3);
-        $publicDir = $basePath . '/public';
-
-        if (!is_dir($publicDir)) {
-            mkdir($publicDir, 0755, true);
-        }
-
-        $indexFile = $publicDir . '/index.php';
-        if (!is_file($indexFile)) {
-            file_put_contents($indexFile, "<?php\nrequire_once dirname(__DIR__) . '/engine/Bootstrap.php';\n\$app = \\Oshim\\Bootstrap::boot();\n");
-        }
-
-        $output->writeln("<bold><cyan>OSHIM Sovereign Framework Server</cyan></bold>");
+        $output->writeln("<bold><cyan>🚀 Booting OSHIM Universal Fiber Reactor</cyan></bold>");
         $output->writeln("Server running at: <green>http://{$host}:{$port}</green>");
-        $output->writeln("Document root: <dim>{$publicDir}</dim>");
-        $output->writeln("Press Ctrl+C to stop the server.");
-        $output->writeln();
+        $output->writeln("<yellow>Note: This server replaces the slow 'php -S' with our Native Fiber Engine.</yellow>");
+        $output->writeln("Press Ctrl+C to stop the server.\n");
 
-        passthru(sprintf(
-            '%s -S %s:%s -t %s %s',
-            PHP_BINARY,
-            escapeshellarg((string)$host),
-            escapeshellarg((string)$port),
-            escapeshellarg($publicDir),
-            escapeshellarg($indexFile)
-        ));
+        try {
+            $reactor = new UniversalReactor($host, $port);
+            
+            // Dummy HTTP Handler to serve the JS file and an example page
+            $reactor->setHttpHandler(function (string $method, string $uri) {
+                if ($uri === '/oshim-livedom.js') {
+                    $jsPath = dirname(__DIR__, 3) . '/public/oshim-livedom.js';
+                    if (file_exists($jsPath)) {
+                        return file_get_contents($jsPath);
+                    }
+                }
+                
+                // Default fallback response
+                return <<<HTML
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <title>OSHIM Fiber Reactor</title>
+                    <script src="/oshim-livedom.js"></script>
+                </head>
+                <body class="bg-gray-900 text-white p-8 font-sans">
+                    <h1 class="text-3xl font-bold text-cyan-400">OSHIM Zero-Lag Server Active</h1>
+                    <p class="mt-4">HTTP and WebSockets are now running on the same port.</p>
+                </body>
+                </html>
+                HTML;
+            });
+
+            $reactor->boot();
+            
+        } catch (\Throwable $e) {
+            $output->writeln("<red>Failed to start server: " . $e->getMessage() . "</red>");
+            return 1;
+        }
 
         return 0;
     }
