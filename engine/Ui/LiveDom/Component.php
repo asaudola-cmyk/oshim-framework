@@ -40,8 +40,14 @@ abstract class Component
         $reflection = new ReflectionClass($this);
         foreach ($reflection->getProperties(ReflectionProperty::IS_PUBLIC) as $property) {
             $name = $property->getName();
-            if ($name !== 'id') {
-                $state[$name] = $this->{$name};
+            if ($name !== 'id' && $property->isInitialized($this)) {
+                $val = $this->{$name};
+                // WHY: If property is a Signal object, serialize its inner value rather than the object instance
+                if ($val instanceof \Oshim\Ui\Dsl\Signal) {
+                    $state[$name] = $val->get();
+                } else {
+                    $state[$name] = $val;
+                }
             }
         }
         return $state;
@@ -49,10 +55,23 @@ abstract class Component
 
     public function hydrate(array $state): void
     {
+        // WHY: Ensure lifecycle mount() has executed so all Signal and typed properties are initialized
+        if (!$this->isMounted) {
+            $this->mount();
+            $this->isMounted = true;
+        }
+
         foreach ($state as $key => $value) {
             if (property_exists($this, $key)) {
                 $this->updating($key, $value);
-                $this->{$key} = $value;
+                
+                // WHY: If property is a Signal, update its value via set() to prevent type collision
+                if (isset($this->{$key}) && $this->{$key} instanceof \Oshim\Ui\Dsl\Signal) {
+                    $this->{$key}->set($value);
+                } else {
+                    $this->{$key} = $value;
+                }
+                
                 $this->updated($key, $value);
             }
         }

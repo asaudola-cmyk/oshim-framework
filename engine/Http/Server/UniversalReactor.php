@@ -230,12 +230,163 @@ class UniversalReactor
         }
     }
 
+    protected array $channels = [];
+
+    /**
+     * 🚀 FULL LIVEDOM WEBSOCKET ACTION DISPATCHER
+     * 
+     * WHY: Previously this was a stub returning {'status':'Fiber WS Active'}.
+     * Now it decodes RFC 6455 frames, hydrates components, executes actions,
+     * and broadcasts morphed HTML diffs back to all subscribers in real-time.
+     */
     protected function handleWsFrame($client, string $data): void
     {
-        // WS frame logic delegated here
-        $response = json_encode(['status' => 'Fiber WS Active']);
+        $payload = $this->unmaskPayload($data);
+        if ($payload === null || $payload === '') {
+            return;
+        }
+
+        try {
+            $action = json_decode($payload, true);
+            if (!is_array($action) || !isset($action['id'], $action['component'])) {
+                return;
+            }
+
+            $componentId = (string)$action['id'];
+            $componentName = (string)$action['component'];
+            $clientId = (int)$client;
+
+            // Subscribe client socket to this component channel
+            if (!isset($this->channels[$componentId])) {
+                $this->channels[$componentId] = [];
+            }
+            $this->channels[$componentId][$clientId] = $client;
+
+            // Resolve target component class
+            $componentClass = null;
+            if ($componentName === 'DemoComponent' || $componentName === 'root_demo') {
+                $componentClass = \Oshim\Ui\LiveDom\DemoComponent::class;
+            } else {
+                $candidates = [
+                    "App\\Components\\{$componentName}",
+                    "Oshim\\Ui\\LiveDom\\{$componentName}",
+                    $componentName
+                ];
+                foreach ($candidates as $candidate) {
+                    if (class_exists($candidate)) {
+                        $componentClass = $candidate;
+                        break;
+                    }
+                }
+            }
+
+            if ($componentClass !== null) {
+                /** @var \Oshim\Ui\LiveDom\Component $component */
+                $component = new $componentClass($componentId);
+            } else {
+                // Dynamic fallback component
+                $component = new class($componentId) extends \Oshim\Ui\LiveDom\Component {
+                    public int $count = 0;
+                    public string $text = '';
+                    public function increment(): void { $this->count++; }
+                    public function update_model($val): void { $this->text = (string)$val; }
+                    public function render(): \Oshim\Ui\Dsl\Element {
+                        return \Oshim\Ui\Dsl\Div::make()->classes('p-6 bg-gray-900 text-white rounded-lg')->children([
+                            \Oshim\Ui\Dsl\H1::make()->text("OSHIM Dynamic Component")->classes('text-2xl font-bold'),
+                            \Oshim\Ui\Dsl\Div::make()->text("Count: " . $this->count),
+                            \Oshim\Ui\Dsl\Button::make('Increment (+)')
+                                ->onClick('increment')
+                                ->classes('bg-blue-600 px-4 py-2 rounded text-white')
+                        ]);
+                    }
+                };
+            }
+
+            // 1. Hydrate state
+            if (isset($action['state']) && is_array($action['state'])) {
+                $component->hydrate($action['state']);
+            }
+
+            // 2. Invoke requested action method
+            if (isset($action['method']) && method_exists($component, $action['method'])) {
+                $method = (string)$action['method'];
+                $val = $action['value'] ?? null;
+                if ($val !== null) {
+                    $component->$method($val);
+                } else {
+                    $component->$method();
+                }
+            }
+
+            // 3. Compile updated HTML and extract updated state
+            $html = $component->compile();
+            $state = $component->getState();
+
+            $responsePayload = json_encode([
+                'id' => $componentId,
+                'html' => $html,
+                'state' => $state
+            ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
+            // 4. Broadcast to all active subscribers on this channel
+            if (isset($this->channels[$componentId])) {
+                foreach ($this->channels[$componentId] as $subId => $subSocket) {
+                    if (is_resource($subSocket)) {
+                        $this->sendWsFrame($subSocket, $responsePayload);
+                    } else {
+                        unset($this->channels[$componentId][$subId]);
+                    }
+                }
+            } else {
+                $this->sendWsFrame($client, $responsePayload);
+            }
+
+        } catch (\Throwable $e) {
+            $errorPayload = json_encode(['error' => $e->getMessage()]);
+            $this->sendWsFrame($client, $errorPayload);
+        }
+    }
+
+    protected function unmaskPayload(string $data): ?string
+    {
+        if (strlen($data) < 2) {
+            return null;
+        }
+
+        $length = ord($data[1]) & 127;
+        if ($length === 126) {
+            $masks = substr($data, 4, 4);
+            $data = substr($data, 8);
+        } elseif ($length === 127) {
+            $masks = substr($data, 10, 4);
+            $data = substr($data, 14);
+        } else {
+            $masks = substr($data, 2, 4);
+            $data = substr($data, 6);
+        }
+
+        $text = '';
+        $dataLen = strlen($data);
+        for ($i = 0; $i < $dataLen; ++$i) {
+            $text .= $data[$i] ^ $masks[$i % 4];
+        }
+
+        return $text;
+    }
+
+    protected function sendWsFrame($client, string $text): void
+    {
         $b1 = 0x80 | (0x1 & 0x0f);
-        $header = pack('CC', $b1, strlen($response));
-        @fwrite($client, $header . $response);
+        $length = strlen($text);
+
+        if ($length <= 125) {
+            $header = pack('CC', $b1, $length);
+        } elseif ($length > 125 && $length < 65536) {
+            $header = pack('CCn', $b1, 126, $length);
+        } else {
+            $header = pack('CCNN', $b1, 127, $length);
+        }
+
+        @fwrite($client, $header . $text);
     }
 }

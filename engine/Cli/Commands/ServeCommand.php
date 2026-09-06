@@ -55,11 +55,31 @@ class ServeCommand extends Command
                     <meta charset="UTF-8">
                     <meta name="viewport" content="width=device-width, initial-scale=1.0">
                     <title>OSHIM Sovereign Engine</title>
+                    <!-- Sovereign Offline CSS Fallback (Zero external CDN dependency required) -->
+                    <style>
+                        *, ::before, ::after { box-sizing: border-box; }
+                        body { background-color: #0f172a; color: #f8fafc; font-family: ui-sans-serif, system-ui, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
+                        .bg-gray-900 { background-color: #0f172a; }
+                        .text-white { color: #ffffff; }
+                        .p-6 { padding: 1.5rem; }
+                        .rounded-lg { border-radius: 0.75rem; }
+                        .shadow-xl { box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5); }
+                        .text-2xl { font-size: 1.5rem; line-height: 2rem; }
+                        .font-bold { font-weight: 700; }
+                        .mb-4 { margin-bottom: 1rem; }
+                        .flex { display: flex; }
+                        .items-center { align-items: center; }
+                        .space-x-4 > * + * { margin-left: 1rem; }
+                        .bg-blue-600 { background-color: #2563eb; }
+                        .bg-blue-600:hover { background-color: #3b82f6; }
+                        .px-4 { padding-left: 1rem; padding-right: 1rem; }
+                        .py-2 { padding-top: 0.5rem; padding-bottom: 0.5rem; }
+                        .rounded { border-radius: 0.375rem; }
+                        .transition { transition-property: all; transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1); transition-duration: 150ms; }
+                        button { cursor: pointer; border: none; font-weight: 600; }
+                    </style>
                     <script src="https://cdn.tailwindcss.com"></script>
                     <script src="/oshim-livedom.js"></script>
-                    <style>
-                        body { background-color: #111827; color: #fff; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
-                    </style>
                 </head>
                 <body>
                     {$componentHtml}
