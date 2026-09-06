@@ -38,8 +38,10 @@
 #include <sys/mman.h>
 #include <time.h>
 #include <stdint.h>
+#include <math.h>
+#include <immintrin.h>
 
-#define OSHIM_VERSION "4.5.0-SOVEREIGN-C"
+#define OSHIM_VERSION "5.0.0-SOVEREIGN-SIMD"
 #define OSHIM_DEFAULT_PORT 8000
 #define OSHIM_MAX_EVENTS 1024
 #define OSHIM_BUFFER_SIZE 65536
@@ -56,5 +58,20 @@ PHP_FUNCTION(oshim_mmap_file_open);
 PHP_FUNCTION(oshim_mmap_file_read);
 PHP_FUNCTION(oshim_mmap_file_write);
 PHP_FUNCTION(oshim_mmap_file_close);
+
+/* 🧠 Sovereign AVX2 / AVX-512 Vector Math Intrinsics */
+PHP_FUNCTION(oshim_simd_dot);
+PHP_FUNCTION(oshim_simd_cosine);
+PHP_FUNCTION(oshim_simd_euclidean);
+
+/* ⚡ Sovereign Lock-Free Atomic Operations */
+PHP_FUNCTION(oshim_atomic_add64);
+PHP_FUNCTION(oshim_atomic_cas64);
+PHP_FUNCTION(oshim_atomic_get64);
+
+/* 🌐 Sovereign POSIX Shared Living Memory */
+PHP_FUNCTION(oshim_shm_create);
+PHP_FUNCTION(oshim_shm_open);
+PHP_FUNCTION(oshim_shm_close);
 
 #endif /* PHP_OSHIM_H */

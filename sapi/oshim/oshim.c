@@ -375,6 +375,425 @@ PHP_FUNCTION(oshim_mmap_file_close)
     RETURN_TRUE;
 }
 
+/* ==================================================================== */
+/* 3.1. HARDWARE AVX2 / AVX-512 SIMD VECTOR ENGINES (THE PYTHON KILLER) */
+/* ==================================================================== */
+
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((target("avx512f,avx512dq,fma")))
+static float oshim_dot_avx512(const float *a, const float *b, size_t n)
+{
+    __m512 sum = _mm512_setzero_ps();
+    size_t i = 0;
+    for (; i + 16 <= n; i += 16) {
+        __m512 va = _mm512_loadu_ps(a + i);
+        __m512 vb = _mm512_loadu_ps(b + i);
+        sum = _mm512_fmadd_ps(va, vb, sum);
+    }
+    float total = _mm512_reduce_add_ps(sum);
+    for (; i < n; i++) {
+        total += a[i] * b[i];
+    }
+    return total;
+}
+
+__attribute__((target("avx2,fma")))
+static float oshim_dot_avx2(const float *a, const float *b, size_t n)
+{
+    __m256 sum = _mm256_setzero_ps();
+    size_t i = 0;
+    for (; i + 8 <= n; i += 8) {
+        __m256 va = _mm256_loadu_ps(a + i);
+        __m256 vb = _mm256_loadu_ps(b + i);
+        sum = _mm256_fmadd_ps(va, vb, sum);
+    }
+    float buffer[8];
+    _mm256_storeu_ps(buffer, sum);
+    float total = 0.0f;
+    for (int j = 0; j < 8; j++) total += buffer[j];
+    for (; i < n; i++) {
+        total += a[i] * b[i];
+    }
+    return total;
+}
+#endif
+
+static float oshim_dot_scalar(const float *a, const float *b, size_t n)
+{
+    float total = 0.0f;
+    for (size_t i = 0; i < n; i++) {
+        total += a[i] * b[i];
+    }
+    return total;
+}
+
+static float oshim_compute_dot(const float *a, const float *b, size_t n)
+{
+#if defined(__GNUC__) || defined(__clang__)
+    if (__builtin_cpu_supports("avx512f") && __builtin_cpu_supports("avx512dq")) {
+        return oshim_dot_avx512(a, b, n);
+    }
+    if (__builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma")) {
+        return oshim_dot_avx2(a, b, n);
+    }
+#endif
+    return oshim_dot_scalar(a, b, n);
+}
+
+static float oshim_compute_cosine(const float *a, const float *b, size_t n)
+{
+    float dot = oshim_compute_dot(a, b, n);
+    float norm_a = oshim_compute_dot(a, a, n);
+    float norm_b = oshim_compute_dot(b, b, n);
+
+    if (norm_a <= 0.0f || norm_b <= 0.0f) {
+        return 0.0f;
+    }
+    return dot / (sqrtf(norm_a) * sqrtf(norm_b));
+}
+
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((target("avx512f,avx512dq,fma")))
+static float oshim_euclidean_avx512(const float *a, const float *b, size_t n)
+{
+    __m512 sum = _mm512_setzero_ps();
+    size_t i = 0;
+    for (; i + 16 <= n; i += 16) {
+        __m512 va = _mm512_loadu_ps(a + i);
+        __m512 vb = _mm512_loadu_ps(b + i);
+        __m512 diff = _mm512_sub_ps(va, vb);
+        sum = _mm512_fmadd_ps(diff, diff, sum);
+    }
+    float total = _mm512_reduce_add_ps(sum);
+    for (; i < n; i++) {
+        float diff = a[i] - b[i];
+        total += diff * diff;
+    }
+    return sqrtf(total);
+}
+
+__attribute__((target("avx2,fma")))
+static float oshim_euclidean_avx2(const float *a, const float *b, size_t n)
+{
+    __m256 sum = _mm256_setzero_ps();
+    size_t i = 0;
+    for (; i + 8 <= n; i += 8) {
+        __m256 va = _mm256_loadu_ps(a + i);
+        __m256 vb = _mm256_loadu_ps(b + i);
+        __m256 diff = _mm256_sub_ps(va, vb);
+        sum = _mm256_fmadd_ps(diff, diff, sum);
+    }
+    float buffer[8];
+    _mm256_storeu_ps(buffer, sum);
+    float total = 0.0f;
+    for (int j = 0; j < 8; j++) total += buffer[j];
+    for (; i < n; i++) {
+        float diff = a[i] - b[i];
+        total += diff * diff;
+    }
+    return sqrtf(total);
+}
+#endif
+
+static float oshim_compute_euclidean(const float *a, const float *b, size_t n)
+{
+#if defined(__GNUC__) || defined(__clang__)
+    if (__builtin_cpu_supports("avx512f") && __builtin_cpu_supports("avx512dq")) {
+        return oshim_euclidean_avx512(a, b, n);
+    }
+    if (__builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma")) {
+        return oshim_euclidean_avx2(a, b, n);
+    }
+#endif
+    float total = 0.0f;
+    for (size_t i = 0; i < n; i++) {
+        float diff = a[i] - b[i];
+        total += diff * diff;
+    }
+    return sqrtf(total);
+}
+
+PHP_FUNCTION(oshim_simd_dot)
+{
+    zend_string *vec_a;
+    zend_string *vec_b;
+
+    ZEND_PARSE_PARAMETERS_START(2, 2)
+        Z_PARAM_STR(vec_a)
+        Z_PARAM_STR(vec_b)
+    ZEND_PARSE_PARAMETERS_END();
+
+    size_t len_a = ZSTR_LEN(vec_a);
+    size_t len_b = ZSTR_LEN(vec_b);
+
+    if (len_a == 0 || len_a != len_b || (len_a % sizeof(float)) != 0) {
+        RETURN_DOUBLE(0.0);
+    }
+
+    size_t num_floats = len_a / sizeof(float);
+    const float *fa = (const float *)ZSTR_VAL(vec_a);
+    const float *fb = (const float *)ZSTR_VAL(vec_b);
+
+    float result = oshim_compute_dot(fa, fb, num_floats);
+    RETURN_DOUBLE((double)result);
+}
+
+PHP_FUNCTION(oshim_simd_cosine)
+{
+    zend_string *vec_a;
+    zend_string *vec_b;
+
+    ZEND_PARSE_PARAMETERS_START(2, 2)
+        Z_PARAM_STR(vec_a)
+        Z_PARAM_STR(vec_b)
+    ZEND_PARSE_PARAMETERS_END();
+
+    size_t len_a = ZSTR_LEN(vec_a);
+    size_t len_b = ZSTR_LEN(vec_b);
+
+    if (len_a == 0 || len_a != len_b || (len_a % sizeof(float)) != 0) {
+        RETURN_DOUBLE(0.0);
+    }
+
+    size_t num_floats = len_a / sizeof(float);
+    const float *fa = (const float *)ZSTR_VAL(vec_a);
+    const float *fb = (const float *)ZSTR_VAL(vec_b);
+
+    float result = oshim_compute_cosine(fa, fb, num_floats);
+    RETURN_DOUBLE((double)result);
+}
+
+PHP_FUNCTION(oshim_simd_euclidean)
+{
+    zend_string *vec_a;
+    zend_string *vec_b;
+
+    ZEND_PARSE_PARAMETERS_START(2, 2)
+        Z_PARAM_STR(vec_a)
+        Z_PARAM_STR(vec_b)
+    ZEND_PARSE_PARAMETERS_END();
+
+    size_t len_a = ZSTR_LEN(vec_a);
+    size_t len_b = ZSTR_LEN(vec_b);
+
+    if (len_a == 0 || len_a != len_b || (len_a % sizeof(float)) != 0) {
+        RETURN_DOUBLE(0.0);
+    }
+
+    size_t num_floats = len_a / sizeof(float);
+    const float *fa = (const float *)ZSTR_VAL(vec_a);
+    const float *fb = (const float *)ZSTR_VAL(vec_b);
+
+    float result = oshim_compute_euclidean(fa, fb, num_floats);
+    RETURN_DOUBLE((double)result);
+}
+
+/* ==================================================================== */
+/* 3.2. SOVEREIGN LOCK-FREE ATOMICS & SHARED LIVING MEMORY              */
+/* ==================================================================== */
+
+PHP_FUNCTION(oshim_atomic_add64)
+{
+    zend_long handle;
+    zend_long offset;
+    zend_long delta;
+
+    ZEND_PARSE_PARAMETERS_START(3, 3)
+        Z_PARAM_LONG(handle)
+        Z_PARAM_LONG(offset)
+        Z_PARAM_LONG(delta)
+    ZEND_PARSE_PARAMETERS_END();
+
+    if (handle < 0 || handle >= OSHIM_MAX_MMAP_FILES || oshim_mmap_table[handle].ptr == NULL) {
+        RETURN_FALSE;
+    }
+
+    if (offset < 0 || (size_t)(offset + sizeof(int64_t)) > oshim_mmap_table[handle].size || (offset % sizeof(int64_t)) != 0) {
+        RETURN_FALSE;
+    }
+
+    int64_t *target = (int64_t *)((char *)oshim_mmap_table[handle].ptr + offset);
+    int64_t new_val = __atomic_add_fetch(target, (int64_t)delta, __ATOMIC_SEQ_CST);
+
+    RETURN_LONG((zend_long)new_val);
+}
+
+PHP_FUNCTION(oshim_atomic_cas64)
+{
+    zend_long handle;
+    zend_long offset;
+    zend_long expected;
+    zend_long desired;
+
+    ZEND_PARSE_PARAMETERS_START(4, 4)
+        Z_PARAM_LONG(handle)
+        Z_PARAM_LONG(offset)
+        Z_PARAM_LONG(expected)
+        Z_PARAM_LONG(desired)
+    ZEND_PARSE_PARAMETERS_END();
+
+    if (handle < 0 || handle >= OSHIM_MAX_MMAP_FILES || oshim_mmap_table[handle].ptr == NULL) {
+        RETURN_FALSE;
+    }
+
+    if (offset < 0 || (size_t)(offset + sizeof(int64_t)) > oshim_mmap_table[handle].size || (offset % sizeof(int64_t)) != 0) {
+        RETURN_FALSE;
+    }
+
+    int64_t *target = (int64_t *)((char *)oshim_mmap_table[handle].ptr + offset);
+    int64_t exp = (int64_t)expected;
+    bool success = __atomic_compare_exchange_n(target, &exp, (int64_t)desired, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+
+    RETURN_BOOL(success);
+}
+
+PHP_FUNCTION(oshim_atomic_get64)
+{
+    zend_long handle;
+    zend_long offset;
+
+    ZEND_PARSE_PARAMETERS_START(2, 2)
+        Z_PARAM_LONG(handle)
+        Z_PARAM_LONG(offset)
+    ZEND_PARSE_PARAMETERS_END();
+
+    if (handle < 0 || handle >= OSHIM_MAX_MMAP_FILES || oshim_mmap_table[handle].ptr == NULL) {
+        RETURN_FALSE;
+    }
+
+    if (offset < 0 || (size_t)(offset + sizeof(int64_t)) > oshim_mmap_table[handle].size || (offset % sizeof(int64_t)) != 0) {
+        RETURN_FALSE;
+    }
+
+    int64_t *target = (int64_t *)((char *)oshim_mmap_table[handle].ptr + offset);
+    int64_t val = __atomic_load_n(target, __ATOMIC_ACQUIRE);
+
+    RETURN_LONG((zend_long)val);
+}
+
+PHP_FUNCTION(oshim_shm_create)
+{
+    zend_string *name;
+    zend_long size;
+
+    ZEND_PARSE_PARAMETERS_START(2, 2)
+        Z_PARAM_STR(name)
+        Z_PARAM_LONG(size)
+    ZEND_PARSE_PARAMETERS_END();
+
+    if (size <= 0) {
+        RETURN_FALSE;
+    }
+
+    if (!oshim_mmap_initialized) {
+        memset(oshim_mmap_table, 0, sizeof(oshim_mmap_table));
+        oshim_mmap_initialized = 1;
+    }
+
+    int slot = -1;
+    for (int i = 0; i < OSHIM_MAX_MMAP_FILES; i++) {
+        if (oshim_mmap_table[i].ptr == NULL) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot == -1) RETURN_FALSE;
+
+    int fd = shm_open(ZSTR_VAL(name), O_RDWR | O_CREAT, 0666);
+    if (fd < 0) {
+        RETURN_FALSE;
+    }
+
+    if (ftruncate(fd, (off_t)size) != 0) {
+        close(fd);
+        RETURN_FALSE;
+    }
+
+    void *ptr = mmap(NULL, (size_t)size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (ptr == MAP_FAILED) {
+        close(fd);
+        RETURN_FALSE;
+    }
+
+    oshim_mmap_table[slot].fd = fd;
+    oshim_mmap_table[slot].size = (size_t)size;
+    oshim_mmap_table[slot].ptr = ptr;
+
+    RETURN_LONG(slot);
+}
+
+PHP_FUNCTION(oshim_shm_open)
+{
+    zend_string *name;
+
+    ZEND_PARSE_PARAMETERS_START(1, 1)
+        Z_PARAM_STR(name)
+    ZEND_PARSE_PARAMETERS_END();
+
+    if (!oshim_mmap_initialized) {
+        memset(oshim_mmap_table, 0, sizeof(oshim_mmap_table));
+        oshim_mmap_initialized = 1;
+    }
+
+    int slot = -1;
+    for (int i = 0; i < OSHIM_MAX_MMAP_FILES; i++) {
+        if (oshim_mmap_table[i].ptr == NULL) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot == -1) RETURN_FALSE;
+
+    int fd = shm_open(ZSTR_VAL(name), O_RDWR, 0666);
+    if (fd < 0) {
+        RETURN_FALSE;
+    }
+
+    struct stat sb;
+    if (fstat(fd, &sb) != 0 || sb.st_size <= 0) {
+        close(fd);
+        RETURN_FALSE;
+    }
+
+    void *ptr = mmap(NULL, (size_t)sb.st_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (ptr == MAP_FAILED) {
+        close(fd);
+        RETURN_FALSE;
+    }
+
+    oshim_mmap_table[slot].fd = fd;
+    oshim_mmap_table[slot].size = (size_t)sb.st_size;
+    oshim_mmap_table[slot].ptr = ptr;
+
+    RETURN_LONG(slot);
+}
+
+PHP_FUNCTION(oshim_shm_close)
+{
+    zend_long handle;
+
+    ZEND_PARSE_PARAMETERS_START(1, 1)
+        Z_PARAM_LONG(handle)
+    ZEND_PARSE_PARAMETERS_END();
+
+    if (handle < 0 || handle >= OSHIM_MAX_MMAP_FILES || oshim_mmap_table[handle].ptr == NULL) {
+        RETURN_FALSE;
+    }
+
+    munmap(oshim_mmap_table[handle].ptr, oshim_mmap_table[handle].size);
+    close(oshim_mmap_table[handle].fd);
+
+    oshim_mmap_table[handle].ptr = NULL;
+    oshim_mmap_table[handle].fd = -1;
+    oshim_mmap_table[handle].size = 0;
+
+    RETURN_TRUE;
+}
+
+/* ==================================================================== */
+/* 3.3. FUNCTION ARGINFO SPECIFICATIONS                                 */
+/* ==================================================================== */
+
 ZEND_BEGIN_ARG_INFO_EX(arginfo_oshim_version, 0, 0, 0)
 ZEND_END_ARG_INFO()
 
@@ -415,6 +834,52 @@ ZEND_BEGIN_ARG_INFO_EX(arginfo_oshim_mmap_file_close, 0, 0, 1)
     ZEND_ARG_INFO(0, handle)
 ZEND_END_ARG_INFO()
 
+ZEND_BEGIN_ARG_INFO_EX(arginfo_oshim_simd_dot, 0, 0, 2)
+    ZEND_ARG_INFO(0, vec_a)
+    ZEND_ARG_INFO(0, vec_b)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO_EX(arginfo_oshim_simd_cosine, 0, 0, 2)
+    ZEND_ARG_INFO(0, vec_a)
+    ZEND_ARG_INFO(0, vec_b)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO_EX(arginfo_oshim_simd_euclidean, 0, 0, 2)
+    ZEND_ARG_INFO(0, vec_a)
+    ZEND_ARG_INFO(0, vec_b)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO_EX(arginfo_oshim_atomic_add64, 0, 0, 3)
+    ZEND_ARG_INFO(0, handle)
+    ZEND_ARG_INFO(0, offset)
+    ZEND_ARG_INFO(0, delta)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO_EX(arginfo_oshim_atomic_cas64, 0, 0, 4)
+    ZEND_ARG_INFO(0, handle)
+    ZEND_ARG_INFO(0, offset)
+    ZEND_ARG_INFO(0, expected)
+    ZEND_ARG_INFO(0, desired)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO_EX(arginfo_oshim_atomic_get64, 0, 0, 2)
+    ZEND_ARG_INFO(0, handle)
+    ZEND_ARG_INFO(0, offset)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO_EX(arginfo_oshim_shm_create, 0, 0, 2)
+    ZEND_ARG_INFO(0, name)
+    ZEND_ARG_INFO(0, size)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO_EX(arginfo_oshim_shm_open, 0, 0, 1)
+    ZEND_ARG_INFO(0, name)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO_EX(arginfo_oshim_shm_close, 0, 0, 1)
+    ZEND_ARG_INFO(0, handle)
+ZEND_END_ARG_INFO()
+
 static const zend_function_entry oshim_functions[] = {
     PHP_FE(oshim_version, arginfo_oshim_version)
     PHP_FE(oshim_cpu_cores, arginfo_oshim_cpu_cores)
@@ -425,6 +890,15 @@ static const zend_function_entry oshim_functions[] = {
     PHP_FE(oshim_mmap_file_read, arginfo_oshim_mmap_file_read)
     PHP_FE(oshim_mmap_file_write, arginfo_oshim_mmap_file_write)
     PHP_FE(oshim_mmap_file_close, arginfo_oshim_mmap_file_close)
+    PHP_FE(oshim_simd_dot, arginfo_oshim_simd_dot)
+    PHP_FE(oshim_simd_cosine, arginfo_oshim_simd_cosine)
+    PHP_FE(oshim_simd_euclidean, arginfo_oshim_simd_euclidean)
+    PHP_FE(oshim_atomic_add64, arginfo_oshim_atomic_add64)
+    PHP_FE(oshim_atomic_cas64, arginfo_oshim_atomic_cas64)
+    PHP_FE(oshim_atomic_get64, arginfo_oshim_atomic_get64)
+    PHP_FE(oshim_shm_create, arginfo_oshim_shm_create)
+    PHP_FE(oshim_shm_open, arginfo_oshim_shm_open)
+    PHP_FE(oshim_shm_close, arginfo_oshim_shm_close)
     PHP_FE_END
 };
 
@@ -461,6 +935,8 @@ static void print_banner(int port, int cores)
     printf("  ⚡ Direct Hardware CPU Cores Detected: \033[1;33m%d Cores\033[0m\n", cores);
     printf("  ⚡ Direct x86_64 Machine Code Assembler Engine Active\n");
     printf("  ⚡ Direct NVMe Memory-Mapped File Storage Engine Active\n");
+    printf("  🧠 Hardware AVX2 / AVX-512 SIMD Vector Neural Engine Active\n");
+    printf("  ⚡ Lock-Free Shared Living Memory & Atomic CAS Engine Active\n");
     printf("  🌐 HTTP Engine listening directly on: \033[1;32mhttp://0.0.0.0:%d\033[0m\n", port);
     printf("  🛡️ Zero Middleware: No Nginx | No Apache | No PHP-FPM | No Node.js\n\n");
 }

@@ -80,7 +80,9 @@ final class FiberScheduler
                     $this->readyQueue->enqueue($fiber);
                 }
             } catch (Throwable $e) {
-                fprintf(stderr, "\033[1;31m[Fiber Error]\033[0m Coroutine failed: %s\n", $e->getMessage());
+                if (defined('STDERR')) {
+                    fprintf(STDERR, "\033[1;31m[Fiber Error]\033[0m Coroutine failed: %s\n", $e->getMessage());
+                }
             }
         }
 
