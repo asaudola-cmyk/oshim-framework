@@ -1,65 +1,140 @@
-# 👑 OSHIM Sovereign C Engine
+<div align="center">
+    <a href="https://php.net">
+        <img
+            alt="PHP"
+            src="https://www.php.net/images/logos/new-php-logo.svg"
+            width="150">
+    </a>
+</div>
 
-> **The Native C-Engine & Bare-Metal Zend Runtime for Next-Generation Computing**
+# The PHP Interpreter
 
-[![OSHIM Core](https://img.shields.io/badge/OSHIM-Sovereign%20Engine-00f2fe?style=for-the-badge)](https://github.com/asaudola-cmyk/oshim-framework)
-[![C Native](https://img.shields.io/badge/C-Zend%20Engine%20VM-blue?style=for-the-badge)](https://github.com/asaudola-cmyk/oshim-framework)
-[![Zero Middleware](https://img.shields.io/badge/Zero-Middleware-success?style=for-the-badge)](https://github.com/asaudola-cmyk/oshim-framework)
+PHP is a popular general-purpose scripting language that is especially suited to
+web development. Fast, flexible and pragmatic, PHP powers everything from your
+blog to the most popular websites in the world. PHP is distributed under the
+[PHP License v3.01](LICENSE).
 
----
+[![Push](https://github.com/php/php-src/actions/workflows/push.yml/badge.svg)](https://github.com/php/php-src/actions/workflows/push.yml)
+[![Build status](https://travis-ci.com/php/php-src.svg?branch=master)](https://travis-ci.com/github/php/php-src)
+[![Fuzzing Status](https://oss-fuzz-build-logs.storage.googleapis.com/badges/php.svg)](https://bugs.chromium.org/p/oss-fuzz/issues/list?sort=-opened&can=1&q=proj:php)
 
-## 🏛️ The Paradigm Shift
+## Documentation
 
-Traditional web frameworks (Laravel, Symfony, Express, Next.js) run **on top of** third-party runtimes and web servers (Nginx, Apache, PHP-FPM, Node.js). They are trapped within user-land scripting limitations.
+The PHP manual is available at [php.net/docs](https://php.net/docs).
 
-**OSHIM is no longer a user-land framework. OSHIM IS THE RUNTIME.**
+## Installation
 
-By embedding the **Zend Virtual Machine** directly into our dedicated C SAPI (`sapi/oshim/`), OSHIM executes code directly on bare-metal hardware:
-* **Zero Nginx / Zero Apache / Zero FPM:** Direct POSIX socket event loop in native C.
-* **Direct C SAPI Execution:** Direct pointer memory mapping with zero-copy stream buffers.
-* **Sovereign C Core:** Built directly from the official Zend Engine & PHP C source code.
+### Prebuilt packages and binaries
 
----
+Prebuilt packages and binaries can be used to get up and running fast with PHP.
 
-## 📂 Core Engine Structure
+For Windows, the PHP binaries can be obtained from
+[windows.php.net](https://windows.php.net). After extracting the archive the
+`*.exe` files are ready to use.
 
-```
-oshim-framework/
-├── Zend/               # The Core Zend VM (Bytecode Compiler, Executor, Memory Manager)
-├── main/               # Main PHP Core API & Streams
-├── sapi/
-│   ├── oshim/          # 👑 Sovereign OSHIM Native C SAPI (Direct Hardware Driver)
-│   ├── cli/            # Standard CLI fallback
-│   └── ...
-├── ext/                # Core C Extensions (Standard, JSON, FFI, Fiber, Hash, etc.)
-└── TSRM/               # Thread-Safe Resource Manager
-```
+For other systems, see the [installation chapter](https://php.net/install).
 
----
+### Building PHP source code
 
-## 🚀 Building the Sovereign Engine
+*For Windows, see [Build your own PHP on Windows](https://wiki.php.net/internals/windows/stepbystepbuild_sdk_2).*
 
-### Requirements
-* GCC / Clang
-* Make
-* Linux / POSIX environment
+For a minimal PHP build from Git, you will need autoconf, bison, and re2c. For
+a default build, you will additionally need libxml2 and libsqlite3.
 
-### Compilation
-```bash
-# 1. Build configuration with Sovereign OSHIM SAPI enabled
-./buildconf --force
+On Ubuntu, you can install these using:
 
-# 2. Configure native engine
-./configure --enable-oshim --enable-fiber --with-ffi
+    sudo apt install -y pkg-config build-essential autoconf bison re2c \
+                        libxml2-dev libsqlite3-dev
 
-# 3. Compile bare-metal binary
-make -j$(nproc)
+On Fedora, you can install these using:
 
-# 4. Run directly via OSHIM SAPI
-./sapi/oshim/oshim app.php
-```
+    sudo dnf install re2c bison autoconf make libtool ccache libxml2-devel sqlite-devel
 
----
+Generate configure:
 
-## 📜 License
-The OSHIM Engine is distributed under the [PHP License v3.01](LICENSE).
+    ./buildconf
+
+Configure your build. `--enable-debug` is recommended for development, see
+`./configure --help` for a full list of options.
+
+    # For development
+    ./configure --enable-debug
+    # For production
+    ./configure
+
+Build PHP. To speed up the build, specify the maximum number of jobs using `-j`:
+
+    make -j4
+
+The number of jobs should usually match the number of available cores, which
+can be determined using `nproc`.
+
+## Testing PHP source code
+
+PHP ships with an extensive test suite, the command `make test` is used after
+successful compilation of the sources to run this test suite.
+
+It is possible to run tests using multiple cores by setting `-jN` in
+`TEST_PHP_ARGS`:
+
+    make TEST_PHP_ARGS=-j4 test
+
+Shall run `make test` with a maximum of 4 concurrent jobs: Generally the maximum
+number of jobs should not exceed the number of cores available.
+
+The [qa.php.net](https://qa.php.net) site provides more detailed info about
+testing and quality assurance.
+
+## Installing PHP built from source
+
+After a successful build (and test), PHP may be installed with:
+
+    make install
+
+Depending on your permissions and prefix, `make install` may need super user
+permissions.
+
+## PHP extensions
+
+Extensions provide additional functionality on top of PHP. PHP consists of many
+essential bundled extensions. Additional extensions can be found in the PHP
+Extension Community Library - [PECL](https://pecl.php.net).
+
+## Contributing
+
+The PHP source code is located in the Git repository at
+[github.com/php/php-src](https://github.com/php/php-src). Contributions are most
+welcome by forking the repository and sending a pull request.
+
+Discussions are done on GitHub, but depending on the topic can also be relayed
+to the official PHP developer mailing list internals@lists.php.net.
+
+New features require an RFC and must be accepted by the developers. See
+[Request for comments - RFC](https://wiki.php.net/rfc) and
+[Voting on PHP features](https://wiki.php.net/rfc/voting) for more information
+on the process.
+
+Bug fixes don't require an RFC. If the bug has a GitHub issue, reference it in
+the commit message using `GH-NNNNNN`. Use `#NNNNNN` for tickets in the old
+[bugs.php.net](https://bugs.php.net) bug tracker.
+
+    Fix GH-7815: php_uname doesn't recognise latest Windows versions
+    Fix #55371: get_magic_quotes_gpc() throws deprecation warning
+
+See [Git workflow](https://wiki.php.net/vcs/gitworkflow) for details on how pull
+requests are merged.
+
+### Guidelines for contributors
+
+See further documents in the repository for more information on how to
+contribute:
+
+- [Contributing to PHP](/CONTRIBUTING.md)
+- [PHP coding standards](/CODING_STANDARDS.md)
+- [Mailing list rules](/docs/mailinglist-rules.md)
+- [PHP release process](/docs/release-process.md)
+
+## Credits
+
+For the list of people who've put work into PHP, please see the
+[PHP credits page](https://php.net/credits.php).
