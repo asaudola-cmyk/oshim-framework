@@ -87,40 +87,34 @@ class Element
 
     /**
      * 🚀 MAGIC TAILWIND BUILDER
-     * Allows: $el->p(4)->bg('red-500')->textWhite()->flex()
+     * Allows: $el->p(4)->bg('red-500')->textWhite()->flex()->hoverBg('blue-600')
+     * 
+     * WHY: Eliminates manual string concatenation for Tailwind utility classes.
+     * Maps camelCase method names and parameters directly into valid Tailwind classes.
      */
-        public function __call(string $name, array $arguments): static
+    public function __call(string $name, array $arguments): static
     {
-        // Convert camelCase to kebab-case
-        $class = strtolower(preg_replace('/(?<!^)[A-Z]/', '-public function __call(string $name, array $arguments): static
-    {
-        // Handle utility methods without arguments e.g., ->flex(), ->relative()
-        if (empty($arguments)) {
-            // Convert camelCase to kebab-case (e.g., textWhite -> text-white)
-            $class = strtolower(preg_replace('/(?<!^)[A-Z]/', '-$0', $name));
-            $this->classes[] = $class;
-            return $this;
-        }', $name));
+        // 1. Convert camelCase to kebab-case, inserting hyphens before capital letters and digit clusters
+        // WHY: Handles standard utility flags like textWhite -> text-white AND scale indicators like text2xl -> text-2xl
+        $class = strtolower((string)preg_replace('/(?<!^)(?:[A-Z]|\d+)/', '-$0', $name));
         
-        // Handle Tailwind modifiers (e.g., hoverBg -> hover:bg)
-        $class = str_replace('hover-', 'hover:', $class);
-        $class = str_replace('focus-', 'focus:', $class);
-        $class = str_replace('md-', 'md:', $class);
-        $class = str_replace('lg-', 'lg:', $class);
+        // 2. Map standard Tailwind pseudo-class & responsive prefixes from hyphens to colons
+        $prefixes = ['hover-', 'focus-', 'active-', 'disabled-', 'sm-', 'md-', 'lg-', 'xl-', '2xl-', 'dark-'];
+        foreach ($prefixes as $prefix) {
+            if (str_starts_with($class, $prefix)) {
+                $replacement = substr($prefix, 0, -1) . ':';
+                $class = $replacement . substr($class, strlen($prefix));
+                break;
+            }
+        }
         
+        // 3. Handle zero-argument utility flags vs parameterized utilities
         if (empty($arguments)) {
             $this->classes[] = $class;
         } else {
-            $value = $arguments[0];
-            $this->classes[] = "{$class}-{$value}";
+            $val = (string)$arguments[0];
+            $this->classes[] = "{$class}-{$val}";
         }
-        
-        return $this;
-    }
-
-        // Handle parameterized methods e.g., ->p(4) => 'p-4', ->bg('red-500') => 'bg-red-500'
-        $value = $arguments[0];
-        $this->classes[] = "{$name}-{$value}";
         
         return $this;
     }
