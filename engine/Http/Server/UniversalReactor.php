@@ -42,7 +42,23 @@ class UniversalReactor
 
     public function boot(): void
     {
-        $this->masterSocket = stream_socket_server("tcp://{$this->host}:{$this->port}", $errno, $errstr);
+        // WHY: SO_REUSEPORT allows multiple worker processes to bind to the same port simultaneously
+        // with kernel-level connection load balancing across CPU cores.
+        $context = stream_context_create([
+            'socket' => [
+                'so_reuseport' => true,
+                'so_reuseaddr' => true,
+                'backlog' => 8192
+            ]
+        ]);
+
+        $this->masterSocket = stream_socket_server(
+            "tcp://{$this->host}:{$this->port}",
+            $errno,
+            $errstr,
+            STREAM_SERVER_BIND | STREAM_SERVER_LISTEN,
+            $context
+        );
         if (!$this->masterSocket) {
             throw new RuntimeException("Universal Reactor failed to start: $errstr ($errno)");
         }

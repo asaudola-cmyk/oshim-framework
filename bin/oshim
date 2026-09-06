@@ -125,6 +125,8 @@ $cli->register(new ServeCommand())
     ->register(new SelfHealCommand())
     ->register(new DesktopBuildCommand())
     ->register(new PackStandaloneCommand())
+    ->register(new \Oshim\Cli\Commands\ClusterServeCommand())
+    ->register(new \Oshim\Cli\Commands\WasmCompileCommand())
     ->register(new CreateProjectCommand());
 
 // Execute Command
