@@ -12,6 +12,8 @@
 #include "php_oshim.h"
 
 static int oshim_current_client_fd = -1;
+static char oshim_current_method[16] = "GET";
+static char oshim_current_uri[1024] = "/";
 
 /* Structure for tracked memory-mapped NVMe storage files */
 typedef struct {
@@ -82,7 +84,8 @@ static int oshim_send_headers(sapi_headers_struct *sapi_headers)
     );
 
     if (len > 0) {
-        write(oshim_current_client_fd, header_buf, (size_t)len);
+        ssize_t written = write(oshim_current_client_fd, header_buf, (size_t)len);
+        (void)written;
     }
 
     return SAPI_HEADER_SENT_SUCCESSFULLY;
@@ -94,6 +97,8 @@ static void oshim_register_server_variables(zval *track_vars_array)
     php_register_variable("GATEWAY_INTERFACE", "OSHIM/4.5", track_vars_array);
     php_register_variable("SERVER_NAME", "localhost", track_vars_array);
     php_register_variable("SERVER_PORT", "8000", track_vars_array);
+    php_register_variable("REQUEST_METHOD", oshim_current_method, track_vars_array);
+    php_register_variable("REQUEST_URI", oshim_current_uri, track_vars_array);
 }
 
 static void oshim_log_message(const char *message, int syslog_type_int)
@@ -370,16 +375,56 @@ PHP_FUNCTION(oshim_mmap_file_close)
     RETURN_TRUE;
 }
 
+ZEND_BEGIN_ARG_INFO_EX(arginfo_oshim_version, 0, 0, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO_EX(arginfo_oshim_cpu_cores, 0, 0, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO_EX(arginfo_oshim_nanotime, 0, 0, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO_EX(arginfo_oshim_mmap_allocate, 0, 0, 1)
+    ZEND_ARG_INFO(0, size)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO_EX(arginfo_oshim_exec_asm, 0, 0, 1)
+    ZEND_ARG_INFO(0, machine_code)
+    ZEND_ARG_INFO(0, arg1)
+    ZEND_ARG_INFO(0, arg2)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO_EX(arginfo_oshim_mmap_file_open, 0, 0, 2)
+    ZEND_ARG_INFO(0, path)
+    ZEND_ARG_INFO(0, size)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO_EX(arginfo_oshim_mmap_file_read, 0, 0, 3)
+    ZEND_ARG_INFO(0, handle)
+    ZEND_ARG_INFO(0, offset)
+    ZEND_ARG_INFO(0, length)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO_EX(arginfo_oshim_mmap_file_write, 0, 0, 3)
+    ZEND_ARG_INFO(0, handle)
+    ZEND_ARG_INFO(0, offset)
+    ZEND_ARG_INFO(0, data)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO_EX(arginfo_oshim_mmap_file_close, 0, 0, 1)
+    ZEND_ARG_INFO(0, handle)
+ZEND_END_ARG_INFO()
+
 static const zend_function_entry oshim_functions[] = {
-    PHP_FE(oshim_version, NULL)
-    PHP_FE(oshim_cpu_cores, NULL)
-    PHP_FE(oshim_nanotime, NULL)
-    PHP_FE(oshim_mmap_allocate, NULL)
-    PHP_FE(oshim_exec_asm, NULL)
-    PHP_FE(oshim_mmap_file_open, NULL)
-    PHP_FE(oshim_mmap_file_read, NULL)
-    PHP_FE(oshim_mmap_file_write, NULL)
-    PHP_FE(oshim_mmap_file_close, NULL)
+    PHP_FE(oshim_version, arginfo_oshim_version)
+    PHP_FE(oshim_cpu_cores, arginfo_oshim_cpu_cores)
+    PHP_FE(oshim_nanotime, arginfo_oshim_nanotime)
+    PHP_FE(oshim_mmap_allocate, arginfo_oshim_mmap_allocate)
+    PHP_FE(oshim_exec_asm, arginfo_oshim_exec_asm)
+    PHP_FE(oshim_mmap_file_open, arginfo_oshim_mmap_file_open)
+    PHP_FE(oshim_mmap_file_read, arginfo_oshim_mmap_file_read)
+    PHP_FE(oshim_mmap_file_write, arginfo_oshim_mmap_file_write)
+    PHP_FE(oshim_mmap_file_close, arginfo_oshim_mmap_file_close)
     PHP_FE_END
 };
 
@@ -420,18 +465,85 @@ static void print_banner(int port, int cores)
     printf("  🛡️ Zero Middleware: No Nginx | No Apache | No PHP-FPM | No Node.js\n\n");
 }
 
-int main(int argc, char *argv[])
+/**
+ * 🏃 DIRECT CLI SCRIPT EXECUTION ENGINE
+ * 
+ * WHY: Executes PHP scripts directly inside Zend VM without any HTTP server overhead.
+ * Provides bare-metal script execution speed matching native C / Go / Rust CLI binaries.
+ */
+static int oshim_run_cli(const char *script_file)
 {
-    int port = OSHIM_DEFAULT_PORT;
-    const char *script_file = "index.php";
+    char real_path[PATH_MAX];
+    const char *target_file = script_file;
+    if (realpath(script_file, real_path) != NULL) {
+        target_file = real_path;
+    }
 
-    if (argc >= 2) {
-        if (strcmp(argv[1], "-v") == 0 || strcmp(argv[1], "--version") == 0) {
-            printf("OSHIM Sovereign C Engine v%s (Core: Zend VM v%s, PHP v%s)\n",
-                   OSHIM_VERSION, ZEND_LOGICAL_COMPILER_VERSION, PHP_VERSION);
-            return 0;
-        }
-        script_file = argv[1];
+    if (access(target_file, R_OK) != 0) {
+        fprintf(stderr, "\033[1;31m[OSHIM Error]\033[0m Cannot open script file '%s': %s\n",
+                target_file, strerror(errno));
+        return 1;
+    }
+
+    sapi_startup(&oshim_sapi_module);
+    oshim_sapi_module.executable_location = "oshim";
+    if (oshim_sapi_module.startup(&oshim_sapi_module) == FAILURE) {
+        fprintf(stderr, "\033[1;31m[OSHIM Error]\033[0m Failed to initialize OSHIM SAPI module.\n");
+        return 1;
+    }
+
+    SG(request_info).path_translated = (char *)target_file;
+
+    if (php_request_startup() == SUCCESS) {
+        zend_file_handle file_handle;
+        zend_stream_init_filename(&file_handle, target_file);
+        file_handle.primary_script = 1;
+        php_execute_script(&file_handle);
+        php_request_shutdown(NULL);
+    }
+
+    php_module_shutdown();
+    sapi_shutdown();
+    return 0;
+}
+
+/**
+ * ⚡ INLINE CODE EVALUATION ENGINE (-r)
+ * 
+ * WHY: Evaluates raw PHP code expressions directly inside Zend VM with zero file I/O.
+ */
+static int oshim_eval_cli(const char *code)
+{
+    sapi_startup(&oshim_sapi_module);
+    oshim_sapi_module.executable_location = "oshim";
+    if (oshim_sapi_module.startup(&oshim_sapi_module) == FAILURE) {
+        fprintf(stderr, "\033[1;31m[OSHIM Error]\033[0m Failed to initialize OSHIM SAPI module.\n");
+        return 1;
+    }
+
+    if (php_request_startup() == SUCCESS) {
+        zend_eval_string_ex((char *)code, NULL, "OSHIM Sovereign Inline", 1);
+        php_request_shutdown(NULL);
+    }
+
+    php_module_shutdown();
+    sapi_shutdown();
+    return 0;
+}
+
+/**
+ * 🌐 LINUX EPOLL HIGH-THROUGHPUT HTTP REACTOR ENGINE (THE NODE / GO KILLER)
+ * 
+ * WHY: Replaces Nginx, Apache, Node.js, and PHP-FPM with an event-driven multiplexer
+ * running directly on Linux kernel epoll_wait(2). Keeps the Zend Engine hot in memory
+ * across all concurrent requests with zero bootstrap or fork overhead.
+ */
+static int oshim_run_server(int port, const char *script_file)
+{
+    char real_path[PATH_MAX];
+    const char *target_script = script_file;
+    if (realpath(script_file, real_path) != NULL) {
+        target_script = real_path;
     }
 
     long cores = sysconf(_SC_NPROCESSORS_ONLN);
@@ -440,7 +552,7 @@ int main(int argc, char *argv[])
     // 1. Initialize SAPI and Zend Module Subsystem
     sapi_startup(&oshim_sapi_module);
     if (oshim_sapi_module.startup(&oshim_sapi_module) == FAILURE) {
-        fprintf(stderr, "Failed to initialize OSHIM SAPI module.\n");
+        fprintf(stderr, "\033[1;31m[OSHIM Error]\033[0m Failed to initialize OSHIM SAPI module.\n");
         return 1;
     }
 
@@ -517,7 +629,11 @@ int main(int argc, char *argv[])
                     socklen_t client_len = sizeof(client_addr);
                     int client_fd = accept(server_fd, (struct sockaddr *)&client_addr, &client_len);
                     if (client_fd < 0) {
+#if defined(EWOULDBLOCK) && (EWOULDBLOCK != EAGAIN)
                         if (errno == EAGAIN || errno == EWOULDBLOCK) {
+#else
+                        if (errno == EAGAIN) {
+#endif
                             break; // All connections drained
                         }
                         break;
@@ -542,15 +658,21 @@ int main(int argc, char *argv[])
                     char method[16] = "GET";
                     char uri[1024] = "/";
                     sscanf(recv_buffer, "%15s %1023s", method, uri);
+                    strncpy(oshim_current_method, method, sizeof(oshim_current_method) - 1);
+                    oshim_current_method[sizeof(oshim_current_method) - 1] = '\0';
+                    strncpy(oshim_current_uri, uri, sizeof(oshim_current_uri) - 1);
+                    oshim_current_uri[sizeof(oshim_current_uri) - 1] = '\0';
 
                     // Setup Zend Execution Context
                     if (php_request_startup() == SUCCESS) {
                         SG(request_info).request_method = method;
                         SG(request_info).request_uri = uri;
                         SG(request_info).proto_num = 1001;
+                        SG(request_info).path_translated = (char *)target_script;
 
                         zend_file_handle file_handle;
-                        zend_stream_init_filename(&file_handle, script_file);
+                        zend_stream_init_filename(&file_handle, target_script);
+                        file_handle.primary_script = 1;
 
                         // Execute script inside Zend Virtual Machine
                         php_execute_script(&file_handle);
@@ -578,4 +700,49 @@ int main(int argc, char *argv[])
     sapi_shutdown();
 
     return 0;
+}
+
+/* ==================================================================== */
+/* 5. MAIN ENTRYPOINT & CLI DISPATCHER                                  */
+/* ==================================================================== */
+
+int main(int argc, char *argv[])
+{
+    if (argc >= 2) {
+        // Option 1: Version check
+        if (strcmp(argv[1], "-v") == 0 || strcmp(argv[1], "--version") == 0) {
+            printf("OSHIM Sovereign C Engine v%s (Core: Zend VM v%s, PHP v%s)\n",
+                   OSHIM_VERSION, ZEND_VERSION, PHP_VERSION);
+            return 0;
+        }
+
+        // Option 2: Inline code evaluation
+        if (strcmp(argv[1], "-r") == 0) {
+            if (argc < 3) {
+                fprintf(stderr, "Error: -r requires PHP code argument\n");
+                return 1;
+            }
+            return oshim_eval_cli(argv[2]);
+        }
+
+        // Option 3: Explicit HTTP Server mode
+        if (strcmp(argv[1], "server") == 0) {
+            int port = OSHIM_DEFAULT_PORT;
+            const char *script = "index.php";
+            if (argc >= 3) {
+                port = atoi(argv[2]);
+                if (port <= 0 || port > 65535) port = OSHIM_DEFAULT_PORT;
+            }
+            if (argc >= 4) {
+                script = argv[3];
+            }
+            return oshim_run_server(port, script);
+        }
+
+        // Option 4: Direct script file execution
+        return oshim_run_cli(argv[1]);
+    }
+
+    // Default: Start high-throughput server on default port
+    return oshim_run_server(OSHIM_DEFAULT_PORT, "index.php");
 }
