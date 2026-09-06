@@ -7,3 +7,9 @@ build/
 .DS_Store
 storage/framework/cache/*
 !storage/framework/cache/.gitkeep
+storage/memory/*
+!storage/memory/.gitkeep
+storage/data/*
+!storage/data/.gitkeep
+storage/database/*.sqlite-shm
+storage/database/*.sqlite-wal
