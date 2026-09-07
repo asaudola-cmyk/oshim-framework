@@ -126,6 +126,15 @@ float unum_simd_dot_f32(const float *a, const float *b, size_t dim);
 /* Hardware SIMD Batch Dot Product (runs 'count' vector dot products in pure C) */
 float unum_simd_dot_batch(const float *a, const float *b, size_t dim, size_t count);
 
+/* Hardware Tiled Matrix Multiplication (C = A x B, dimensions: M x K x N) */
+void unum_tensor_matmul_f32(const float *A, const float *B, float *C, size_t M, size_t K, size_t N);
+
+/* Neural Network Activations: 0=ReLU, 1=GELU, 2=Softmax */
+void unum_tensor_activate_f32(float *data, size_t size, int activation_type);
+
+/* Hardware Cosine Similarity with vectorized L2 normalization */
+float unum_tensor_cosine_similarity(const float *a, const float *b, size_t dim);
+
 /* CPU feature bitmask detection (AVX, AVX2, AVX-512, FMA) */
 uint32_t unum_cpu_features(void);
 

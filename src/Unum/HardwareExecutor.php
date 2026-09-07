@@ -38,6 +38,9 @@ final class HardwareExecutor
                 int64_t unum_execute(const void *code_page, int64_t arg1, int64_t arg2, int64_t arg3);
                 float unum_simd_dot_f32(const float *a, const float *b, size_t dim);
                 float unum_simd_dot_batch(const float *a, const float *b, size_t dim, size_t count);
+                void unum_tensor_matmul_f32(const float *A, const float *B, float *C, size_t M, size_t K, size_t N);
+                void unum_tensor_activate_f32(float *data, size_t size, int activation_type);
+                float unum_tensor_cosine_similarity(const float *a, const float *b, size_t dim);
                 uint32_t unum_cpu_features(void);
 CDEF;
 
@@ -163,6 +166,51 @@ CDEF;
         }
 
         return (float)self::$ffi->unum_simd_dot_batch($cA, $cB, $dim, $count);
+    }
+
+    /**
+     * Returns the raw internal FFI instance for zero-copy operations.
+     */
+    public function getFfi(): FFI
+    {
+        return self::$ffi;
+    }
+
+    /**
+     * Allocates a contiguous, memory-aligned C float buffer.
+     */
+    public function newFloatBuffer(int $count): FFI\CData
+    {
+        if ($count <= 0) {
+            throw new RuntimeException("Buffer size must be greater than zero, got: {$count}");
+        }
+        return self::$ffi->new("float[{$count}]");
+    }
+
+    /**
+     * Executes vectorized bare-metal matrix multiplication: C = A x B.
+     * Dimensions: A is M x K, B is K x N, C is M x N.
+     */
+    public function tensorMatmul(FFI\CData $A, FFI\CData $B, FFI\CData $C, int $M, int $K, int $N): void
+    {
+        self::$ffi->unum_tensor_matmul_f32($A, $B, $C, $M, $K, $N);
+    }
+
+    /**
+     * Executes vectorized neural network activation on a contiguous float buffer.
+     * Activation Type: 0 = ReLU, 1 = GELU, 2 = Softmax.
+     */
+    public function tensorActivate(FFI\CData $data, int $size, int $activationType): void
+    {
+        self::$ffi->unum_tensor_activate_f32($data, $size, $activationType);
+    }
+
+    /**
+     * Computes vectorized cosine similarity between two float buffers.
+     */
+    public function tensorCosineSimilarity(FFI\CData $a, FFI\CData $b, int $dim): float
+    {
+        return (float)self::$ffi->unum_tensor_cosine_similarity($a, $b, $dim);
     }
 
     /**

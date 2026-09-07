@@ -11,6 +11,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #include <cpuid.h>
+#include <math.h>
 #include "unum_engine.h"
 
 /* ------------------------------------------------------------------------ */
@@ -348,6 +349,117 @@ static float unum_simd_dot_avx2(const float *a, const float *b, size_t dim)
     }
     return total;
 }
+
+__attribute__((target("avx512f,fma")))
+static void unum_tensor_matmul_avx512(const float *A, const float *B, float *C, size_t M, size_t K, size_t N)
+{
+    /* WHY: Zero-initialize destination buffer before accumulating dot products */
+    memset(C, 0, M * N * sizeof(float));
+    /* WHY: IKJ loop ordering guarantees contiguous memory access across cache lines */
+    for (size_t i = 0; i < M; i++) {
+        for (size_t p = 0; p < K; p++) {
+            float a_ip = A[i * K + p];
+            __m512 va = _mm512_set1_ps(a_ip);
+            size_t j = 0;
+            for (; j + 16 <= N; j += 16) {
+                __m512 vb = _mm512_loadu_ps(&B[p * N + j]);
+                __m512 vc = _mm512_loadu_ps(&C[i * N + j]);
+                vc = _mm512_fmadd_ps(va, vb, vc);
+                _mm512_storeu_ps(&C[i * N + j], vc);
+            }
+            for (; j < N; j++) {
+                C[i * N + j] += a_ip * B[p * N + j];
+            }
+        }
+    }
+}
+
+__attribute__((target("avx2,fma")))
+static void unum_tensor_matmul_avx2(const float *A, const float *B, float *C, size_t M, size_t K, size_t N)
+{
+    /* WHY: Zero-initialize destination buffer before accumulating dot products */
+    memset(C, 0, M * N * sizeof(float));
+    /* WHY: IKJ loop ordering avoids strided cache thrashing in L1/L2 caches */
+    for (size_t i = 0; i < M; i++) {
+        for (size_t p = 0; p < K; p++) {
+            float a_ip = A[i * K + p];
+            __m256 va = _mm256_set1_ps(a_ip);
+            size_t j = 0;
+            for (; j + 8 <= N; j += 8) {
+                __m256 vb = _mm256_loadu_ps(&B[p * N + j]);
+                __m256 vc = _mm256_loadu_ps(&C[i * N + j]);
+                vc = _mm256_fmadd_ps(va, vb, vc);
+                _mm256_storeu_ps(&C[i * N + j], vc);
+            }
+            for (; j < N; j++) {
+                C[i * N + j] += a_ip * B[p * N + j];
+            }
+        }
+    }
+}
+
+__attribute__((target("avx2")))
+static void unum_relu_avx2(float *data, size_t size)
+{
+    __m256 zero = _mm256_setzero_ps();
+    size_t i = 0;
+    for (; i + 8 <= size; i += 8) {
+        __m256 v = _mm256_loadu_ps(&data[i]);
+        v = _mm256_max_ps(v, zero);
+        _mm256_storeu_ps(&data[i], v);
+    }
+    for (; i < size; i++) {
+        if (data[i] < 0.0f) data[i] = 0.0f;
+    }
+}
+
+__attribute__((target("avx2,fma")))
+static float unum_cosine_avx2(const float *a, const float *b, size_t dim)
+{
+    __m256 sum_dot = _mm256_setzero_ps();
+    __m256 sum_a2  = _mm256_setzero_ps();
+    __m256 sum_b2  = _mm256_setzero_ps();
+
+    size_t i = 0;
+    for (; i + 8 <= dim; i += 8) {
+        __m256 va = _mm256_loadu_ps(&a[i]);
+        __m256 vb = _mm256_loadu_ps(&b[i]);
+        sum_dot = _mm256_fmadd_ps(va, vb, sum_dot);
+        sum_a2  = _mm256_fmadd_ps(va, va, sum_a2);
+        sum_b2  = _mm256_fmadd_ps(vb, vb, sum_b2);
+    }
+
+    __m128 lo_d = _mm256_castps256_ps128(sum_dot);
+    __m128 hi_d = _mm256_extractf128_ps(sum_dot, 1);
+    __m128 s_d = _mm_add_ps(lo_d, hi_d);
+    s_d = _mm_hadd_ps(s_d, s_d);
+    s_d = _mm_hadd_ps(s_d, s_d);
+    float dot = _mm_cvtss_f32(s_d);
+
+    __m128 lo_a = _mm256_castps256_ps128(sum_a2);
+    __m128 hi_a = _mm256_extractf128_ps(sum_a2, 1);
+    __m128 s_a = _mm_add_ps(lo_a, hi_a);
+    s_a = _mm_hadd_ps(s_a, s_a);
+    s_a = _mm_hadd_ps(s_a, s_a);
+    float norm_a = _mm_cvtss_f32(s_a);
+
+    __m128 lo_b = _mm256_castps256_ps128(sum_b2);
+    __m128 hi_b = _mm256_extractf128_ps(sum_b2, 1);
+    __m128 s_b = _mm_add_ps(lo_b, hi_b);
+    s_b = _mm_hadd_ps(s_b, s_b);
+    s_b = _mm_hadd_ps(s_b, s_b);
+    float norm_b = _mm_cvtss_f32(s_b);
+
+    for (; i < dim; i++) {
+        dot += a[i] * b[i];
+        norm_a += a[i] * a[i];
+        norm_b += b[i] * b[i];
+    }
+
+    float denom = sqrtf(norm_a) * sqrtf(norm_b);
+    if (denom <= 1e-12f) return 0.0f;
+    return dot / denom;
+}
 #endif
 
 float unum_simd_dot_f32(const float *a, const float *b, size_t dim)
@@ -375,6 +487,112 @@ float unum_simd_dot_batch(const float *a, const float *b, size_t dim, size_t cou
         total += unum_simd_dot_f32(a, b, dim);
     }
     return total;
+}
+
+void unum_tensor_matmul_f32(const float *A, const float *B, float *C, size_t M, size_t K, size_t N)
+{
+    if (!A || !B || !C || M == 0 || K == 0 || N == 0) return;
+
+#if defined(__x86_64__) || defined(_M_X64)
+    if (__builtin_cpu_supports("avx512f") && __builtin_cpu_supports("fma")) {
+        unum_tensor_matmul_avx512(A, B, C, M, K, N);
+        return;
+    }
+    if (__builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma")) {
+        unum_tensor_matmul_avx2(A, B, C, M, K, N);
+        return;
+    }
+#endif
+
+    /* Portable fallback scalar matmul with IKJ ordering */
+    memset(C, 0, M * N * sizeof(float));
+    for (size_t i = 0; i < M; i++) {
+        for (size_t p = 0; p < K; p++) {
+            float a_ip = A[i * K + p];
+            for (size_t j = 0; j < N; j++) {
+                C[i * N + j] += a_ip * B[p * N + j];
+            }
+        }
+    }
+}
+
+void unum_tensor_activate_f32(float *data, size_t size, int activation_type)
+{
+    if (!data || size == 0) return;
+
+    switch (activation_type) {
+        case 0: /* ReLU */
+#if defined(__x86_64__) || defined(_M_X64)
+            if (__builtin_cpu_supports("avx2")) {
+                unum_relu_avx2(data, size);
+                return;
+            }
+#endif
+            for (size_t i = 0; i < size; i++) {
+                if (data[i] < 0.0f) data[i] = 0.0f;
+            }
+            break;
+
+        case 1: { /* GELU: 0.5 * x * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3))) */
+            const float sqrt_2_over_pi = 0.7978845608028654f;
+            const float coeff = 0.044715f;
+            for (size_t i = 0; i < size; i++) {
+                float x = data[i];
+                float cube = x * x * x;
+                float inner = sqrt_2_over_pi * (x + coeff * cube);
+                data[i] = 0.5f * x * (1.0f + tanhf(inner));
+            }
+            break;
+        }
+
+        case 2: { /* Softmax: exp(x_i - max) / sum(exp(x_j - max)) */
+            float max_val = data[0];
+            for (size_t i = 1; i < size; i++) {
+                if (data[i] > max_val) max_val = data[i];
+            }
+
+            float sum_exp = 0.0f;
+            for (size_t i = 0; i < size; i++) {
+                data[i] = expf(data[i] - max_val);
+                sum_exp += data[i];
+            }
+
+            if (sum_exp > 0.0f) {
+                float inv_sum = 1.0f / sum_exp;
+                for (size_t i = 0; i < size; i++) {
+                    data[i] *= inv_sum;
+                }
+            }
+            break;
+        }
+
+        default:
+            break;
+    }
+}
+
+float unum_tensor_cosine_similarity(const float *a, const float *b, size_t dim)
+{
+    if (!a || !b || dim == 0) return 0.0f;
+
+#if defined(__x86_64__) || defined(_M_X64)
+    if (__builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma")) {
+        return unum_cosine_avx2(a, b, dim);
+    }
+#endif
+
+    float dot = 0.0f;
+    float norm_a = 0.0f;
+    float norm_b = 0.0f;
+    for (size_t i = 0; i < dim; i++) {
+        dot += a[i] * b[i];
+        norm_a += a[i] * a[i];
+        norm_b += b[i] * b[i];
+    }
+
+    float denom = sqrtf(norm_a) * sqrtf(norm_b);
+    if (denom <= 1e-12f) return 0.0f;
+    return dot / denom;
 }
 
 uint32_t unum_cpu_features(void)

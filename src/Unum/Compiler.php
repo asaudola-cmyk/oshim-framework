@@ -53,6 +53,35 @@ final class Compiler
     }
 
     /**
+     * Compiles a natural mathematical expression string directly into bare-metal x86_64 machine code.
+     * Example: compileExpression("3 * x^2 + 4 * x + 10", ['x'])
+     * 
+     * @param string $expression
+     * @param list<string> $parameters
+     */
+    public function compileExpression(string $expression, array $parameters = [], bool $optimizeEntropy = false): CompiledProgram
+    {
+        $dslCompiler = new \Unum\Dsl\DslCompiler();
+        $numbers = $dslCompiler->compileExpression($expression, $parameters);
+        return $this->compile($numbers, $optimizeEntropy);
+    }
+
+    /**
+     * Compiles an algorithmic DSL code script directly into bare-metal x86_64 machine code.
+     * Example:
+     *   compileCode("acc = 0; loop (count) { acc = acc + 7; } return acc;", ['count'])
+     * 
+     * @param string $code
+     * @param list<string> $parameters
+     */
+    public function compileCode(string $code, array $parameters = [], bool $optimizeEntropy = false): CompiledProgram
+    {
+        $dslCompiler = new \Unum\Dsl\DslCompiler();
+        $numbers = $dslCompiler->compileCode($code, $parameters);
+        return $this->compile($numbers, $optimizeEntropy);
+    }
+
+    /**
      * Builds a bare-metal linear equation evaluator: f(x) = a * x + b
      * 
      * Instructions emitted:
